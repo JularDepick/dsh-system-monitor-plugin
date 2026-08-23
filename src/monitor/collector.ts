@@ -1,0 +1,242 @@
+/*
+ * 进程资源采集器
+ *
+ * 按轮询间隔采集 dsh 进程树与 Agent 已汇报句柄的资源占用:
+ * 经 PowerShell 查询系统进程快照(CIM 为主,Get-Process 为降级),
+ * CPU 占用率以相邻两次采样的累计 CPU 时间差分计算,
+ * 内存换算为 GB 与系统总量百分比。
+ * 数据仅供 UI 面板展示,不暴露给 dsh 使用。
+ * 作者:JularDepick
+ */
+
+import { execFile } from 'node:child_process'
+import { cpus, totalmem } from 'node:os'
+import { QUERY_TIMEOUT_MS } from '../constants'
+import type { MonitorSnapshot, ProcessHandle, ProcessRecord, ResourceSample } from './types'
+
+/** 系统进程查询器接口(便于注入假实现测试) */
+export interface ProcessQuery {
+  /** 查询全部系统进程记录,失败时抛出 */
+  query(): Promise<ProcessRecord[]>
+  /** 最近一次查询是否走降级来源(未查询或首选来源成功时为 false) */
+  readonly degraded: boolean
+}
+
+/** 执行 PowerShell 脚本并返回输出文本 */
+function runPowershell(script: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { windowsHide: true, timeout: QUERY_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
+      (error, stdout) => {
+        if (error) reject(error)
+        else resolve(stdout)
+      },
+    )
+  })
+}
+
+/** 解析 PowerShell 输出的 JSON 进程列表(单对象时包装为数组) */
+function parseRecords(text: string): ProcessRecord[] {
+  const data = JSON.parse(text) as unknown
+  const list = Array.isArray(data) ? data : [data]
+  return list
+    .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+    .filter((item) => Number.isInteger(item.ProcessId))
+    .map((item) => ({
+      pid: item.ProcessId as number,
+      parentPid: Number.isInteger(item.ParentProcessId) ? (item.ParentProcessId as number) : null,
+      name: typeof item.Name === 'string' ? item.Name : String(item.ProcessId),
+      cpuSeconds: typeof item.cpu === 'number' && item.cpu > 0 ? item.cpu : 0,
+      workingSetBytes: typeof item.WorkingSetSize === 'number' && item.WorkingSetSize > 0 ? item.WorkingSetSize : 0,
+    }))
+}
+
+/** CIM 主查询:一次取得全量进程的标识、父子关系、累计 CPU 时间与工作集 */
+class CimProcessQuery implements ProcessQuery {
+  /** 首选来源,不视为降级 */
+  readonly degraded = false
+
+  async query(): Promise<ProcessRecord[]> {
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, @{n=\'cpu\';e={($_.UserModeTime + $_.KernelModeTime) / 10000000}}, WorkingSetSize | ConvertTo-Json -Compress',
+    ].join('\n')
+    return parseRecords(await runPowershell(script))
+  }
+}
+
+/** 降级查询:Get-Process 全量,无父子关系(父进程标识置空) */
+class GetProcessQuery implements ProcessQuery {
+  /** 独立使用时即降级来源,由回退链标注整体状态 */
+  readonly degraded = true
+
+  async query(): Promise<ProcessRecord[]> {
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      "Get-Process | Select-Object @{n='ProcessId';e={$_.Id}}, @{n='ParentProcessId';e={$null}}, Name, @{n='cpu';e={if ($null -eq $_.CPU) { 0 } else { $_.CPU }}}, @{n='WorkingSetSize';e={if ($null -eq $_.WorkingSet64) { 0 } else { $_.WorkingSet64 }}} | ConvertTo-Json -Compress",
+    ].join('\n')
+    return parseRecords(await runPowershell(script))
+  }
+}
+
+/** 依次尝试查询器,全部失败时抛出最后一个错误 */
+class FallbackProcessQuery implements ProcessQuery {
+  /** 最近一次成功查询的索引(未成功为 -1) */
+  private lastIndex = -1
+
+  /** 最近一次查询是否走降级来源(首选索引 0 之外均视为降级) */
+  get degraded(): boolean {
+    return this.lastIndex > 0
+  }
+
+  /** 构造回退查询器 */
+  constructor(private readonly queries: ProcessQuery[]) {}
+
+  async query(): Promise<ProcessRecord[]> {
+    let lastError: unknown
+    for (let index = 0; index < this.queries.length; index += 1) {
+      const query = this.queries[index]
+      try {
+        const records = await query.query()
+        this.lastIndex = index
+        return records
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
+  }
+}
+
+/** 进程资源采集器 */
+export class ProcessCollector {
+  /** 逻辑处理器数量 */
+  private readonly cpuCount = cpus().length
+  /** 系统物理内存总量(字节) */
+  private readonly totalMemoryBytes = totalmem()
+  /** Agent 汇报句柄(按 pid 合并) */
+  private readonly reported = new Map<number, ProcessHandle>()
+  /** 各 pid 的上一轮累计 CPU 时间(秒) */
+  private readonly lastCpu = new Map<number, number>()
+  /** 最近一次采样时刻(epoch 毫秒) */
+  private lastSampledAt = 0
+  /** 最近一次快照(查询失败时保留旧值) */
+  private snapshot: MonitorSnapshot | null = null
+  /** 最近一次查询失败原因(诊断用) */
+  private lastError: string | null = null
+
+  /** 构造采集器 */
+  constructor(
+    /** 采集轮询间隔(毫秒) */
+    public readonly pollInterval: number,
+    /** dsh 根进程标识 */
+    private readonly rootPid: number,
+    /** 系统进程查询器 */
+    private readonly query: ProcessQuery = new FallbackProcessQuery([new CimProcessQuery(), new GetProcessQuery()]),
+  ) {}
+
+  /** 执行一轮采集,失败不影响既有快照 */
+  async poll(): Promise<void> {
+    try {
+      this.advance(await this.query.query())
+      this.lastError = null
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  /** 以原始记录推进一轮采样(纯逻辑,便于测试) */
+  advance(records: ProcessRecord[]): MonitorSnapshot {
+    const byPid = new Map<number, ProcessRecord>()
+    for (const record of records) byPid.set(record.pid, record)
+
+    // 进程树:自 dsh 根进程按父子关系深度优先
+    const children = new Map<number, number[]>()
+    for (const record of records) {
+      if (record.parentPid === null) continue
+      const list = children.get(record.parentPid)
+      if (list) list.push(record.pid)
+      else children.set(record.parentPid, [record.pid])
+    }
+    const treePids: number[] = []
+    const seen = new Set<number>()
+    const visit = (pid: number): void => {
+      if (seen.has(pid)) return
+      seen.add(pid)
+      treePids.push(pid)
+      for (const child of children.get(pid) ?? []) visit(child)
+    }
+    visit(this.rootPid)
+
+    // 已退出的汇报句柄移出集合
+    for (const pid of this.reported.keys()) {
+      if (!byPid.has(pid)) this.reported.delete(pid)
+    }
+
+    // 采样集合:进程树在前,树外的汇报句柄按 pid 升序在后
+    const order = [...treePids]
+    const extraReported = [...this.reported.keys()]
+      .filter((pid) => byPid.has(pid) && !seen.has(pid))
+      .sort((a, b) => a - b)
+    order.push(...extraReported)
+
+    // CPU 差分与内存换算
+    const now = Date.now()
+    const elapsed = this.lastSampledAt === 0 ? 0 : (now - this.lastSampledAt) / 1000
+    const processes: ResourceSample[] = order.map((pid) => {
+      const record = byPid.get(pid)!
+      const reportedHandle = this.reported.get(pid)
+      const handle: ProcessHandle = {
+        pid,
+        name: reportedHandle?.name ?? record.name,
+        ...(reportedHandle?.parentPid ?? record.parentPid) === undefined
+          ? {}
+          : { parentPid: reportedHandle?.parentPid ?? record.parentPid! },
+      }
+      const previous = this.lastCpu.get(pid)
+      let cpuPercent = 0
+      if (previous !== undefined && elapsed > 0 && record.cpuSeconds >= previous) {
+        cpuPercent = ((record.cpuSeconds - previous) / elapsed / this.cpuCount) * 100
+      }
+      this.lastCpu.set(pid, record.cpuSeconds)
+      return {
+        handle,
+        cpuPercent,
+        memoryBytes: record.workingSetBytes,
+        memoryPercent: this.totalMemoryBytes > 0 ? (record.workingSetBytes / this.totalMemoryBytes) * 100 : 0,
+      }
+    })
+    this.lastSampledAt = now
+
+    this.snapshot = {
+      sampledAt: now,
+      pollInterval: this.pollInterval,
+      cpuCount: this.cpuCount,
+      totalMemoryBytes: this.totalMemoryBytes,
+      rootPid: this.rootPid,
+      platform: process.platform,
+      degraded: this.query.degraded,
+      processes,
+    }
+    return this.snapshot
+  }
+
+  /** 合并 Agent 汇报句柄(重复按 pid 合并,存在性在下一轮采样确认) */
+  mergeReported(handles: readonly ProcessHandle[]): void {
+    for (const handle of handles) this.reported.set(handle.pid, handle)
+  }
+
+  /** 获取最近一次面板快照,查询失败时为空 */
+  getSnapshot(): MonitorSnapshot | null {
+    return this.snapshot
+  }
+
+  /** 获取最近一次查询失败原因(无失败时为空) */
+  getLastError(): string | null {
+    return this.lastError
+  }
+}

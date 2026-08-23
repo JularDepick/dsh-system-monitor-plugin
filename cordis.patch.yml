@@ -1,0 +1,4 @@
+# dsh-system-monitor-plugin 的配置层,由 dsh.bundle manifest 引用
+- insert:
+    - id: system-monitor
+      name: dsh-system-monitor-plugin

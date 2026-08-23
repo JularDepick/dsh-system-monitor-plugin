@@ -1,0 +1,15 @@
+# 依赖与缓存
+node_modules/
+.pnpm-store/
+.agents/
+temp/
+
+# 构建产物
+dist/
+*.tgz
+
+# 版本文档(守则第 11 章占用的忽略规则)
+v*-*.md
+
+# Agent Runtime
+.skills/
