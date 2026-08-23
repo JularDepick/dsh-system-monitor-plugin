@@ -39,8 +39,7 @@ export default defineConfig([
     dts: false,
     outputOptions: { entryFileNames: 'client.js' },
     deps: { neverBundle: PLATFORM_EXTERNALS },
-    banner: 'window.__ModuleLoader__.load({ id: "dsh-system-monitor-plugin", factory: (require) => {',
+    banner: 'var module = { exports: {} }; var exports = module.exports;\nwindow.__ModuleLoader__.load({ id: "dsh-system-monitor-plugin", factory: (require) => {',
     footer: 'return module.exports; } });',
-    intro: 'var module = { exports: {} }; var exports = module.exports;',
   },
 ])

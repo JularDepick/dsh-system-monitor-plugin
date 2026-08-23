@@ -165,7 +165,7 @@ export class ProcessCollector {
     const treePids: number[] = []
     const seen = new Set<number>()
     const visit = (pid: number): void => {
-      if (seen.has(pid)) return
+      if (seen.has(pid) || !byPid.has(pid)) return
       seen.add(pid)
       treePids.push(pid)
       for (const child of children.get(pid) ?? []) visit(child)

@@ -1,3 +1,6 @@
 # pnpm workspace 声明,隔离用户家目录的全局 workspace 文件
 packages:
   - .
+
+# 内容寻址 store 固定在工作区内(沙箱环境避免写工作区外被拒,相对本文件解析)
+storeDir: .pnpm-store

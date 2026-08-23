@@ -245,7 +245,7 @@ dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用�
 | 包管理 | pnpm |
 | 目标 dsh 版本 | 0.1.1-rc.2 |
 | 运行时依赖 | `@deepseek-ai/cordis` 4.0.1、`@deepseek-ai/schemastery` 3.18.1、`@deepseek-ai/dsh-tools` 0.1.1-rc.2 |
-| 客户端 UI | React 18(运行时由宿主平台模块表提供),`conversation.view` 槽 + host webserver 数据路由 |
+| 客户端 UI | React 18(运行时由宿主平台模块表提供),`conversation.view` 槽 + host webserver 数据路由;官方组件库 `@deepseek-ai/dsh-client-ui-primitives`(devDependency,平台 seed 直接 value-import) |
 
 > 当项目技术栈发生变化时需要自主更新并告知用户
 
@@ -325,7 +325,7 @@ dsh-system-monitor-plugin/
 | `cordis.patch.yml` | 配置层 patch,按包名插入插件行 |
 | `tsconfig.json` | TypeScript 类型检查配置 |
 | `tsdown.config.ts` | 构建配置,产物 `dist/index.mjs`、`dist/index.d.mts` 与 `dist/client.js` |
-| `pnpm-workspace.yaml` | 声明当前目录为 pnpm workspace,隔离用户家目录的全局 workspace 文件 |
+| `pnpm-workspace.yaml` | 声明当前目录为 pnpm workspace,并在工作区内固定内容寻址 store(`storeDir`,相对路径);隔离用户家目录的全局 workspace 与 store |
 | `.gitignore` | 忽略 node_modules、缓存、产物、版本文档等 |
 
 > 主要指源码目录中影响项目核心功能的配置文件,例如 `package.json` `config.ini`（如果有）;此处只需要给出具体文件列表和功能性说明即可,无需给出文件具体内容
@@ -337,7 +337,7 @@ dsh-system-monitor-plugin/
 - 资源采集轮询间隔默认值:5000 毫秒(同时写入配置 schema 默认)
 - 汇报工具名称:`system_monitor_report`;入参进程句柄结构遵循 `docs/v0.1.0-进程汇报机制与规范.md`
 - 系统进程查询超时:10000 毫秒
-- 面板形态:会话区域标签栏「系统监控」tab(客户端半身,`conversation.view` 槽,id `system-monitor`,排序 30,标签文案跟随界面语言);数据经 host webserver 端点 `/api/system-monitor/snapshot` 同源轮询(5000 毫秒);UI 含概览 KPI、状态徽章(正常/降级)、高占用警示(阈值 90)、占用进度条、骨架屏与空/错误态,视觉遵循宿主 `--dsw-alias-*` 语义 token;面板页脚作者信息随常量可替换
+- 面板形态:会话区域标签栏「系统监控」tab(客户端半身,`conversation.view` 槽,id `system-monitor`,排序 30,标签文案跟随界面语言);数据经 host webserver 端点 `/api/system-monitor/snapshot` 同源轮询(5000 毫秒);UI 对齐 dsh web 原版风格:内容列宽复用宿主 `--dsh-chat-content-width` 等变量与 `--dsw-alias-*` 语义 token,统计卡 KPI、官方 `StateDot` 状态徽章(正常/降级)、meter 占用进度条、高占用警示(阈值 90)、骨架屏与空/错误态;面板页脚作者信息随常量可替换
 - 编译产物:`dist/index.mjs` 与 `dist/index.d.mts`(服务端)、`dist/client.js`(客户端,固定名);`package.json` 的 `main`/`types` 与真实产物对齐
 - 文档语言核心:中文(`README.md` 为中文主 README,英文为额外文档)
 - 翻译/加载行为:未命中回退默认语言,文件缺失回退空表由主逻辑兜底
@@ -377,7 +377,7 @@ pnpm pack                             # 打包 npm tarball
 dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 ```
 
-依赖缓存与 store 重定向到工作区内 `.agents/`(沙箱环境避免写工作区外被拒)。
+依赖缓存与内容寻址 store 固定在工作区内(`storeDir` 见 `pnpm-workspace.yaml`,相对路径),沙箱环境避免写工作区外被拒。
 
 ### 项目启动
 
@@ -401,6 +401,11 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - 版本对齐:先查本地已装 dsh 各包版本,与 npm registry 比对,对齐到本地运行版本(带 rc 的包核对 registry 的 next 标签);
 - 沙箱环境:npm/pnpm 写缓存到工作区外会被拒,store/cache/state 重定向到工作区内;tsdown 产物为 `.mjs/.d.mts`,`package.json` 的 `main`/`types` 必须与真实产物对齐;Node 动态 import 绝对路径必须转 `file://`;
 - 冒烟测试:临时脚本放 `.agents/`,对构建产物断言入口导出、配置默认值、假 ctx 验证装配与工具注册、翻译加载回退;`pnpm pack` 后列 tarball 内容核对打包边界(`files` 收窄,避免源码混入);
+- 客户端发包契约:`exports` 必须含 `"./package.json"`(宿主 client-modules 用 `require.resolve('<包名>/package.json')` 定位,缺此导出会被 exports 拦截拒绝);
+- client bundle 包装:tsdown 0.22 无 `intro` 选项(静默忽略),`module`/`exports` 定义必须并入 `banner`(否则浏览器端执行时 `exports is not defined` 导致插件加载失败);
+- 客户端 UI 组件:官方平台 seed 包 `@deepseek-ai/dsh-client-ui-primitives`(StateDot/Pill/Button 等)可直接 value-import(构建时外部化,运行时由宿主提供),其类型以 devDependency 引入;内容列宽与视觉对齐宿主 `--dsh-chat-content-width` 等 CSS 变量;`--dsw-alias-*` 为官方语义 token 体系;
+- WSL/发布版部署:客户端面发现基于 CLI 包解析上下文(0.1.1-rc.2),第三方 profile 插件需以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web` 才能被托管(`/plugins/<包名>/client.js` 200 且注入 `__DSH_BOOT__`);服务端不受影响;
+- 直接部署工作流:构建后把 `dist/`、`package.json`、`cordis.patch.yml` 直接复制进 profile 的 `node_modules/<包名>/` 覆盖,重启 dsh web 即可生效(client.js 变化走 rev 刷新),免去 pack/add 往返;
 - Windows 沙箱:PowerShell 每次调用独立无状态,必要时传 `workdir`;控制台中文乱码不代表文件损坏(UTF-8 正常)。
 
 ### 辅助脚本（默认未启用扩展项）
