@@ -241,7 +241,7 @@ dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用�
 | 项目 | 选型 |
 |:---:|:---:|
 | 语言 | TypeScript,ESM(`type: module`) |
-| 构建 | tsdown(产物 `dist/index.mjs` + `dist/index.d.mts` + `dist/client.js`) |
+| 构建 | tsdown(构建产物输出 `dist/`;pack tarball 归位 `release/`,build 前置清空 release 旧包) |
 | 包管理 | pnpm |
 | 目标 dsh 版本 | 0.1.1-rc.2 |
 | 运行时依赖 | `@deepseek-ai/cordis` 4.0.1、`@deepseek-ai/schemastery` 3.18.1、`@deepseek-ai/dsh-tools` 0.1.1-rc.2 |
@@ -276,7 +276,7 @@ dsh-system-monitor-plugin/
 │   ├── monitor/                # 系统监控模块
 │   │   ├── index.ts            # 模块装配
 │   │   ├── types.ts            # 进程句柄、资源样本、快照与回执类型
-│   │   ├── collector.ts        # 进程资源采集器(Windows 查询与 CPU 差分)
+│   │   ├── collector.ts        # 进程资源采集器(平台查询链:Windows CIM/降级、Linux /proc;CPU 差分)
 │   │   ├── reporter.ts         # 进程句柄汇报工具
 │   │   └── panel.ts            # 面板数据提供(host webserver 数据端点)
 │   ├── client/                 # 客户端插件
@@ -321,10 +321,10 @@ dsh-system-monitor-plugin/
 
 | 文件 | 功能说明 |
 |:---:|:---:|
-| `package.json` | bundle manifest(`dsh.bundle` 指向 patch)、ESM 声明、`main`/`types` 指向 dist 产物、构建脚本 |
+| `package.json` | bundle manifest(`dsh.bundle` 指向 patch、`dsh.client` 客户端面)、ESM 声明、`main`/`types` 指向 dist 产物、构建脚本(`prepare` 自动构建)、发布字段(license/repository/engines) |
 | `cordis.patch.yml` | 配置层 patch,按包名插入插件行 |
 | `tsconfig.json` | TypeScript 类型检查配置 |
-| `tsdown.config.ts` | 构建配置,产物 `dist/index.mjs`、`dist/index.d.mts` 与 `dist/client.js` |
+| `tsdown.config.ts` | 构建配置,产物输出 `dist/`(`index.mjs`、`index.d.mts` 与 `client.js`) |
 | `pnpm-workspace.yaml` | 声明当前目录为 pnpm workspace,并在工作区内固定内容寻址 store(`storeDir`,相对路径);隔离用户家目录的全局 workspace 与 store |
 | `.gitignore` | 忽略 node_modules、缓存、产物、版本文档等 |
 
@@ -334,15 +334,16 @@ dsh-system-monitor-plugin/
 
 - 插件包名:`dsh-system-monitor-plugin`;插件注册名(name)同包名
 - 默认语言与回退语言:`zh-CN`;翻译文件目录:`src/translation`,命名与内容遵循 `docs/tech-spec/translation-ini.md`,新增语言以 `.example_zh-CN.ini` 为基准模板
-- 资源采集轮询间隔默认值:5000 毫秒(同时写入配置 schema 默认)
+- 资源采集轮询间隔默认值:1000 毫秒(同时写入配置 schema 默认)
 - 汇报工具名称:`system_monitor_report`;入参进程句柄结构遵循 `docs/v0.1.0-进程汇报机制与规范.md`
-- 系统进程查询超时:10000 毫秒
-- 面板形态:会话区域标签栏「系统监控」tab(客户端半身,`conversation.view` 槽,id `system-monitor`,排序 30,标签文案跟随界面语言);数据经 host webserver 端点 `/api/system-monitor/snapshot` 同源轮询(5000 毫秒);UI 对齐 dsh web 原版风格:内容列宽复用宿主 `--dsh-chat-content-width` 等变量与 `--dsw-alias-*` 语义 token,统计卡 KPI、官方 `StateDot` 状态徽章(正常/降级)、meter 占用进度条、高占用警示(阈值 90)、骨架屏与空/错误态;面板页脚作者信息随常量可替换
-- 编译产物:`dist/index.mjs` 与 `dist/index.d.mts`(服务端)、`dist/client.js`(客户端,固定名);`package.json` 的 `main`/`types` 与真实产物对齐
+- 系统进程查询超时:10000 毫秒;Linux 时钟节拍:100(`LINUX_CLK_TCK`)
+- 操作系统识别:快照平台字段为运行平台显示名,Linux 经 `/etc/os-release` 识别发行版与版本(如 Ubuntu 24.04.4 LTS),不做宿主机穿透识别
+- 面板形态:会话区域标签栏「系统监控」tab(客户端半身,`conversation.view` 槽,id `system-monitor`,排序 30,标签文案跟随界面语言);数据经 host webserver 端点 `/api/system-monitor/snapshot` 同源轮询(1000 毫秒);UI 对齐 dsh web 原版风格:内容列宽复用宿主 `--dsh-chat-content-width` 等变量与 `--dsw-alias-*` 语义 token,统计卡 KPI、官方 `StateDot` 状态徽章(正常/降级)、meter 占用进度条、高占用警示(阈值 90)、骨架屏与空/错误态;页脚项目与作者超链接随常量可替换
+- 编译产物:`dist/index.mjs` 与 `dist/index.d.mts`(服务端)、`dist/client.js`(客户端,固定名);pack tarball 归位 `release/`(build 前置清空 release 旧包,postpack 归位新包);`package.json` 的 `main`/`types` 与真实产物对齐
 - 文档语言核心:中文(`README.md` 为中文主 README,英文为额外文档)
 - 翻译/加载行为:未命中回退默认语言,文件缺失回退空表由主逻辑兜底
 - 维护规则:按需核对 `docs/dsh-dev-docs/<版本>/` 与官方仓库 `docs/user/develop` 是否过时,过时则按官方收录流程更新到新版本目录
-- 全局常量索引(文件路径与名称):`src/constants.ts` — `PLUGIN_NAME`、`DEFAULT_LANGUAGE`、`FALLBACK_LANGUAGE`、`TRANSLATION_DIR`、`DEFAULT_POLL_INTERVAL`、`REPORT_TOOL_NAME`、`QUERY_TIMEOUT_MS`、`MONITOR_DATA_PATH`、`CLIENT_POLL_INTERVAL`、`PANEL_TAB_ID`、`PANEL_TAB_ORDER`、`PANEL_TAB_LABEL_ZH`、`PANEL_TAB_LABEL_EN`、`PANEL_AUTHOR`、`PANEL_HIGH_LOAD_THRESHOLD`
+- 全局常量索引(文件路径与名称):`src/constants.ts` — `PLUGIN_NAME`、`DEFAULT_LANGUAGE`、`FALLBACK_LANGUAGE`、`TRANSLATION_DIR`、`DEFAULT_POLL_INTERVAL`、`REPORT_TOOL_NAME`、`QUERY_TIMEOUT_MS`、`LINUX_CLK_TCK`、`MONITOR_DATA_PATH`、`CLIENT_POLL_INTERVAL`、`PANEL_TAB_ID`、`PANEL_TAB_ORDER`、`PANEL_AUTHOR`、`PANEL_AUTHOR_URL`、`PANEL_PROJECT_URL`、`PANEL_HIGH_LOAD_THRESHOLD`
 
 > 主要指可个性化修改但不影响项目核心功能的设计细节,某个项第一次使用时一般需要取默认值方便开发者知悉和维护,具体包括但不限于:
 >
@@ -370,10 +371,9 @@ dsh-system-monitor-plugin/
 
 ```
 pnpm install                          # 安装依赖
-pnpm build                            # tsdown 构建产物到 dist/
-pnpm dev                              # tsdown 监听构建
-pnpm typecheck                        # TypeScript 类型检查
-pnpm pack                             # 打包 npm tarball
+pnpm build                            # tsdown 构建产物到 dist/(前置清空 release/ 旧包)
+pnpm pack                             # 打包 npm tarball(prepare 自动先构建,postpack 归位 release/)
+npm publish --dry-run                 # npmjs 发布预演校验
 dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 ```
 
@@ -388,6 +388,13 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 3. 读核心 README(`README.md`,中文)与项目技术文档(`docs/tech-spec/`、`docs/` 下版本文档),掌握既定机制设计;
 4. 读已收录的 dsh 插件开发文档(`docs/dsh-dev-docs/<版本>/`):先读 `index.agent.md` 速查表,涉及框架机制时精读基础篇与框架篇;未收录时回官方仓库 `docs/user/develop` 查阅;
 5. 动手前的关键技术决策先列给用户裁决;涉及安装/构建/测试须经授权。
+
+### 会话交接要点
+
+- 完整会话交接提示见 `.agents/NEXT_SESSION.md`(项目现状、客户端面契约踩坑、部署与验证方法、待办、技能;随工作区维护,不随包发布);本段仅保留最常查要点:
+- 客户端面契约:包 `exports` 必须含 `"./package.json"`;client bundle 的 `module`/`exports` 定义须并入 banner(tsdown 0.22 无 intro);
+- WSL 发布版部署:客户端面托管需以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web`;开发迭代用直接部署工作流(复制 `dist/`、`package.json`、`cordis.patch.yml` 覆盖 profile 包目录);tarball 分发取 `release/`;
+- 未完成事项:macOS 平台适配(见 `docs/v1.0.0-前驱版本待办排期清单.md`,未实施);Linux(含 WSL)采集已实现。
 
 ### 开发经验
 
@@ -405,7 +412,8 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - client bundle 包装:tsdown 0.22 无 `intro` 选项(静默忽略),`module`/`exports` 定义必须并入 `banner`(否则浏览器端执行时 `exports is not defined` 导致插件加载失败);
 - 客户端 UI 组件:官方平台 seed 包 `@deepseek-ai/dsh-client-ui-primitives`(StateDot/Pill/Button 等)可直接 value-import(构建时外部化,运行时由宿主提供),其类型以 devDependency 引入;内容列宽与视觉对齐宿主 `--dsh-chat-content-width` 等 CSS 变量;`--dsw-alias-*` 为官方语义 token 体系;
 - WSL/发布版部署:客户端面发现基于 CLI 包解析上下文(0.1.1-rc.2),第三方 profile 插件需以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web` 才能被托管(`/plugins/<包名>/client.js` 200 且注入 `__DSH_BOOT__`);服务端不受影响;
-- 直接部署工作流:构建后把 `dist/`、`package.json`、`cordis.patch.yml` 直接复制进 profile 的 `node_modules/<包名>/` 覆盖,重启 dsh web 即可生效(client.js 变化走 rev 刷新),免去 pack/add 往返;
+- 直接部署工作流:构建后把 `dist/`(构建产物)、`package.json`、`cordis.patch.yml` 直接复制进 profile 的 `node_modules/<包名>/` 覆盖,重启 dsh web 即可生效(client.js 变化走 rev 刷新),免去 pack/add 往返;tarball 分发统一取 `release/`(`pnpm pack` 归位);
+- 部署测试规则:部署只负责把最新构建的插件包安装进 WSL dsh profile(直接复制或 `dsh plugin add`),**不自动启动 3081 服务**,启动由用户手动执行(`NODE_PATH=<profile>/node_modules dsh web --no-open --port 3081`);
 - Windows 沙箱:PowerShell 每次调用独立无状态,必要时传 `workdir`;控制台中文乱码不代表文件损坏(UTF-8 正常)。
 
 ### 辅助脚本（默认未启用扩展项）

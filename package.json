@@ -2,6 +2,14 @@
   "name": "dsh-system-monitor-plugin",
   "version": "0.1.0",
   "description": "监控 dsh 进程及其子进程的资源占用,提供进程句柄汇报工具与 UI 面板展示",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JularDepick/dsh-system-monitor-plugin.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -19,12 +27,16 @@
     "dist",
     "cordis.patch.yml",
     "src/translation/*.ini",
-    "src/translation/.example_zh-CN.ini"
+    "src/translation/.example_zh-CN.ini",
+    "README*",
+    "COPYRIGHT"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "node scripts/clean-release.cjs && tsdown",
     "dev": "tsdown --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepare": "pnpm build",
+    "postpack": "node scripts/pack-to-release.cjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

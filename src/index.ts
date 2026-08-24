@@ -15,7 +15,7 @@ export const name = PLUGIN_NAME
 export const inject = ['tools']
 
 export { Config }
-export { ProcessCollector } from './monitor/collector'
+export { LinuxProcQuery, ProcessCollector, resolvePlatformLabel } from './monitor/collector'
 export type {
   MonitorSnapshot,
   ProcessHandle,

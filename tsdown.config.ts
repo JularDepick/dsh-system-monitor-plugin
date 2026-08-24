@@ -3,6 +3,7 @@
  *
  * 两份配置:服务端 bundle(ESM + 类型)与客户端 bundle
  * (CJS 包装为 window.__ModuleLoader__.load,产物 dist/client.js)。
+ * 构建产物输出到 dist/;pack tarball 由 postpack 归位到 release/。
  * 客户端构建链约定遵循 docs/dsh-web-tab-experience.md。
  * 作者:JularDepick
  */

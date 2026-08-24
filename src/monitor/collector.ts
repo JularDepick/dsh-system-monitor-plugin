@@ -2,7 +2,8 @@
  * 进程资源采集器
  *
  * 按轮询间隔采集 dsh 进程树与 Agent 已汇报句柄的资源占用:
- * 经 PowerShell 查询系统进程快照(CIM 为主,Get-Process 为降级),
+ * Windows 经 PowerShell 查询系统进程快照(CIM 为主,Get-Process 为降级),
+ * Linux(含 WSL)经 /proc 文件系统读取;
  * CPU 占用率以相邻两次采样的累计 CPU 时间差分计算,
  * 内存换算为 GB 与系统总量百分比。
  * 数据仅供 UI 面板展示,不暴露给 dsh 使用。
@@ -10,8 +11,10 @@
  */
 
 import { execFile } from 'node:child_process'
+import { readFileSync, readdirSync } from 'node:fs'
 import { cpus, totalmem } from 'node:os'
-import { QUERY_TIMEOUT_MS } from '../constants'
+import { join } from 'node:path'
+import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessRecord, ResourceSample } from './types'
 
 /** 系统进程查询器接口(便于注入假实现测试) */
@@ -112,6 +115,96 @@ class FallbackProcessQuery implements ProcessQuery {
   }
 }
 
+/** Linux 查询:/proc 文件系统读取(可注入根路径便于测试) */
+export class LinuxProcQuery implements ProcessQuery {
+  /** 首选来源,不视为降级 */
+  readonly degraded = false
+
+  /** 构造 Linux 查询器 */
+  constructor(private readonly root = '/proc') {}
+
+  async query(): Promise<ProcessRecord[]> {
+    const records: ProcessRecord[] = []
+    for (const entry of readdirSync(this.root)) {
+      if (!/^\d+$/.test(entry)) continue
+      const pid = Number(entry)
+      try {
+        records.push(this.readProcess(pid))
+      } catch {
+        // 单个进程读取失败(权限或退出竞态)时跳过,不中断整体
+      }
+    }
+    return records
+  }
+
+  /** 读取单个进程记录 */
+  private readProcess(pid: number): ProcessRecord {
+    const dir = join(this.root, String(pid))
+    const stat = readFileSync(join(dir, 'stat'), 'utf8')
+    const nameStart = stat.indexOf('(')
+    const nameEnd = stat.lastIndexOf(')')
+    const tail = stat.slice(nameEnd + 2).trim().split(/\s+/)
+    // tail 自 stat 第 3 字段起:第 4 字段父进程标识、第 14 字段用户态时间、第 15 字段内核态时间
+    const parentPid = Number(tail[1])
+    const utime = Number(tail[11])
+    const stime = Number(tail[12])
+    const status = readFileSync(join(dir, 'status'), 'utf8')
+    const rssMatch = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status)
+    return {
+      pid,
+      parentPid: Number.isInteger(parentPid) ? parentPid : null,
+      name: stat.slice(nameStart + 1, nameEnd).trim() || String(pid),
+      cpuSeconds: ((Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0)) / LINUX_CLK_TCK,
+      workingSetBytes: rssMatch ? Number(rssMatch[1]) * 1024 : 0,
+    }
+  }
+}
+
+/** 未适配平台占位查询:加载不失败,查询时报错由采集器记录 */
+class UnsupportedQuery implements ProcessQuery {
+  /** 无降级语义 */
+  readonly degraded = false
+
+  /** 构造占位查询器 */
+  constructor(private readonly platform: NodeJS.Platform) {}
+
+  async query(): Promise<ProcessRecord[]> {
+    throw new Error(`尚未实现:${this.platform} 平台进程采集`)
+  }
+}
+
+/** 按运行时平台创建查询链:Windows 用 PowerShell 回退链,Linux(含 WSL)用 /proc,其余平台占位 */
+export function createPlatformQuery(): ProcessQuery {
+  switch (process.platform) {
+    case 'win32':
+      return new FallbackProcessQuery([new CimProcessQuery(), new GetProcessQuery()])
+    case 'linux':
+      return new LinuxProcQuery()
+    default:
+      return new UnsupportedQuery(process.platform)
+  }
+}
+
+/** 操作系统显示名(Linux 识别发行版与版本) */
+export function resolvePlatformLabel(): string {
+  if (process.platform === 'win32') return 'Windows'
+  if (process.platform === 'darwin') return 'macOS'
+  if (process.platform === 'linux') {
+    try {
+      const osRelease = readFileSync('/etc/os-release', 'utf8')
+      const pretty = /^PRETTY_NAME="?([^"\n]+)"?$/m.exec(osRelease)
+      if (pretty) return pretty[1].trim()
+      const name = /^NAME="?([^"\n]+)"?$/m.exec(osRelease)
+      const version = /^VERSION_ID="?([^"\n]+)"?$/m.exec(osRelease)
+      if (name) return version ? `${name[1].trim()} ${version[1].trim()}` : name[1].trim()
+    } catch {
+      // /etc/os-release 不可读时按通用 Linux 处理
+    }
+    return 'Linux'
+  }
+  return process.platform
+}
+
 /** 进程资源采集器 */
 export class ProcessCollector {
   /** 逻辑处理器数量 */
@@ -136,7 +229,7 @@ export class ProcessCollector {
     /** dsh 根进程标识 */
     private readonly rootPid: number,
     /** 系统进程查询器 */
-    private readonly query: ProcessQuery = new FallbackProcessQuery([new CimProcessQuery(), new GetProcessQuery()]),
+    private readonly query: ProcessQuery = createPlatformQuery(),
   ) {}
 
   /** 执行一轮采集,失败不影响既有快照 */
@@ -218,7 +311,7 @@ export class ProcessCollector {
       cpuCount: this.cpuCount,
       totalMemoryBytes: this.totalMemoryBytes,
       rootPid: this.rootPid,
-      platform: process.platform,
+      platform: resolvePlatformLabel(),
       degraded: this.query.degraded,
       processes,
     }
