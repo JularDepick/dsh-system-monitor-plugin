@@ -12,7 +12,10 @@ import type { CSSProperties, ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+// 类型面:conversation.view 槽的 SlotMap 合并(槽由 ui-conversation 声明)
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// 类型面:ctx.slots 服务的 Context 合并(slots 服务由 ui-renderer 提供)
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   CLIENT_POLL_INTERVAL,

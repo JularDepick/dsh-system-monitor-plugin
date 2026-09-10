@@ -2,7 +2,7 @@
 
 > 面向 dsh 插件开发者:总结外部插件为 dsh Web GUI 贡献 UI(尤其是新增 tab 页)的完整机制与落地要点。
 > 以会话区域「对话/轨迹」视图标签栏新增 tab 为实例,同样适用于「设置-插件」页等其他挂载点。
-> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对;本经验为静态总结,换版本时以对应发布包类型声明为准。
+> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对,已按 0.1.5-rc.1 发布包复核更新(平台模块表、槽 owner props、客户端发现机制);本经验为静态总结,换版本时以对应发布包类型声明为准。
 
 ## 一、总体流程(五个步骤)
 
@@ -20,8 +20,8 @@
 |:---:|:---:|
 | 槽名 | `conversation.view`(官方声明于 `@deepseek-ai/dsh-client-ui-conversation/client`) |
 | kind / scope | list / session |
-| 注册 options | `id`、`order`、`label`(可为 `() => string` 跟随语言) |
-| owner props | `inspect` / `onInspectDone`(跨视图检查交接,可选,不消费即可) |
+| 注册 options | `id`、`order`、`label`(可为 `() => string` 跟随语言)、`locale` 字典命名空间(可选) |
+| owner props | `viewRequest` / `openView` / `completeViewRequest`(0.1.5-rc.1 的视图聚焦交接,可选,不消费即可;0.1.1-rc.2 为 `inspect` / `onInspectDone`) |
 | 组件 props | `PropsRuntime<'conversation.view'>`(含会话座位 sessionId/useSession/useSessions,**不强制使用**) |
 
 ### 注册代码(官方 ui-trajectory 同模式)
@@ -60,22 +60,23 @@ ctx.slots.inject('conversation.view', () => ctx.slots.register({
 |:---:|:---:|
 | format / platform | cjs / browser |
 | entryFileNames | `client.js`(固定名,host 按此路径 serve) |
-| external | 平台模块表(见下)+ `@deepseek-ai/dsh-client-runtime/client` 豁免 |
-| noExternal | 其余全部内联(tsdown 默认会把 dependencies 外部化,必须用 noExternal 覆盖) |
+| external | 平台模块表 `PLATFORM_MODULES`(见下)+ 包自身 `dsh.client.external` 声明(tsdown 用 `deps.neverBundle` 表达;0.1.5-rc.1 的 `PRELOADED_CLIENT_EXTERNALS` 为空;0.1.1-rc.2 另有 `@deepseek-ai/dsh-client-runtime/client` 豁免,0.1.5-rc.1 已无此包) |
+| noExternal | 其余全部内联(`deps.alwaysBundle`:未被请求的 specifier 一律打进 bundle;官方另有 INLINE_SAFE wire 层内联约定) |
 | banner / footer | `window.__ModuleLoader__.load({ id: "<包名>", factory: (require) => {` / `return module.exports; } });`(tsdown 会格式化多行,断言勿用单行匹配) |
-| intro | `var module = { exports: {} }; var exports = module.exports;` |
+| intro | 官方预设写 `var module = { exports: {} }; var exports = module.exports;`;tsdown 0.22 无 `intro` 选项(静默忽略),必须并入 banner(本项目做法) |
 | dts | false(类型由 tsc 走 lib/types,别让 dts 包装 banner) |
 | define | `process.env.NODE_ENV` 与 `import.meta.env.MODE`(zustand 等内联库需要) |
 | CSS Modules | 自定义插件:lightningcss 编译 `.module.css` 为 hashed classMap + 注入 `<style data-plugin>`(tsdown 自带 css 管线不处理,需虚拟 id 包装,后缀不能是 `.css`) |
 
-平台模块表(宿主冻结模块表中的 seed 词,`packages/client/web/src/platform.ts`):
+平台模块表(宿主冻结模块表中的 seed 词,0.1.5-rc.1 取 `packages/client/web/src/platform.ts` 的 `PLATFORM_MODULES`):
 
 ```
 react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
-@deepseek-ai/dsh-client-ui-slots, @deepseek-ai/dsh-client-web-react,
-@deepseek-ai/dsh-client-ui-primitives, @deepseek-ai/dsh-client-ui-attachment,
-@deepseek-ai/dsh-client-schema-form
+@deepseek-ai/dsh-client-store, @deepseek-ai/dsh-client-ui-slots,
+@deepseek-ai/dsh-client-ui-primitives, @deepseek-ai/dsh-client-ui-dockkit
 ```
+
+> 0.1.5-rc.1 相比 0.1.1-rc.2 变更:`@deepseek-ai/dsh-client-store`、`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`、`@deepseek-ai/dsh-client-ui-attachment`、`@deepseek-ai/dsh-client-schema-form` 移除。外部插件的 tsdown 外部化清单必须与之逐项一致,多余外部化会在浏览器端解析失败。`@deepseek-ai/dsh-client-ui-primitives` 仍在表中,可继续 value-import(如 `StateDot`)。
 
 ### 2. 跨插件协作纪律(构建期 purity 门强制)
 
@@ -101,12 +102,14 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
 
 1. **不需要新增 patch 行**:client 发现机制按 loader 条目(现有插件行)扫描,插件行同时是 host 插件与 client 条目;不要写成 `xxx/client` 子路径行
 2. **client.js 缺失 = web profile 启动失败**:激活期扫描发现 `exports["./client"]` 指向的文件不存在会聚合抛错;必须构建产出后再启动
-3. **官方仓库快照与发布包版本可能不同**:源码快照版本往往低于发布包(如快照 rc.5 vs 发布 0.1.1-rc.2);核对发布包类型与快照源码在所用 API 上的一致性或差异,换版本时务必以发布包类型为准
+3. **官方仓库快照与发布包版本可能不同**:源码快照版本往往低于发布包(如快照 rc.5 vs 发布 0.1.1-rc.2);核对发布包类型与快照源码在所用 API 上的一致性或差异,换版本时务必以发布包类型为准。0.1.5-rc.1 实测要点:`ctx.slots` 的 Context 类型合并改由 `@deepseek-ai/dsh-client-ui-renderer/client` 提供(与槽位 SlotMap 合并的 `ui-conversation/client` 分开),客户端代码需同时 type-only import 两者
 4. **CSS Modules 需要 lightningcss**:tsdown 不内置该管线,官方用自定义插件(虚拟 id + lightningcss transform);不想要 CSS 文件时可用内联样式规避
 5. **样式纪律**:使用 `--dsw-alias-*` 语义 token,不写死颜色;产品文案用界面语言;表格/select 文本居中;不用浏览器原生弹窗
 6. **pnpm 无 TTY 会 abort**:package.json 描述符变更后需 `CI=true pnpm install`;typecheck/build 也建议 `CI=true` 前缀
 
 ## 五、参考文件索引(官方仓库)
+
+> 路径指向所示时期的仓库快照(本经验已按 dsh-v0.1.5-rc.1 复核 platform.ts 与 ui-trajectory 注册范例仍有效);判断最新行为以官方仓库现况为准。
 
 | 文件 | 用途 |
 |:---:|:---:|

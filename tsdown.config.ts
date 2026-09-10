@@ -10,18 +10,17 @@
 
 import { defineConfig } from 'tsdown'
 
-/** 宿主冻结的平台模块表(客户端 bundle 一律外部化,运行时由宿主提供) */
+/** 宿主冻结的平台模块表(dsh 0.1.5-rc.1,客户端 bundle 一律外部化,运行时由宿主提供) */
 const PLATFORM_EXTERNALS = [
   'react',
   'react/jsx-runtime',
   'react-dom',
   'react-dom/client',
   '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
+  '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
 export default defineConfig([

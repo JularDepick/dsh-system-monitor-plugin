@@ -234,7 +234,7 @@ dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用�
 
 - 插件命名遵循 `dsh-<核心名称>-plugin` 规范,核心名称 `system-monitor`;
 - 项目文档语言核心为中文:主 README 为 `README.md`(中文),英文为额外文档 `README_en-US.md`;
-- 目标 dsh 版本 `0.1.1-rc.2`,Release 命名绑定该版本(见 `docs/repo-spec/tag-release-spec.md`)。
+- 目标 dsh 版本 `0.1.5-rc.1`,Release 命名绑定该版本(见 `docs/repo-spec/tag-release-spec.md`)。
 
 ### 技术栈
 
@@ -243,8 +243,8 @@ dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用�
 | 语言 | TypeScript,ESM(`type: module`) |
 | 构建 | tsdown(构建产物输出 `dist/`;pack tarball 归位 `release/`,build 前置清空 release 旧包) |
 | 包管理 | pnpm |
-| 目标 dsh 版本 | 0.1.1-rc.2 |
-| 运行时依赖 | `@deepseek-ai/cordis` 4.0.1、`@deepseek-ai/schemastery` 3.18.1、`@deepseek-ai/dsh-tools` 0.1.1-rc.2 |
+| 目标 dsh 版本 | 0.1.5-rc.1 |
+| 运行时依赖 | `@deepseek-ai/cordis` 4.0.2、`@deepseek-ai/schemastery` 3.18.2、`@deepseek-ai/dsh-tools` 0.1.5-rc.1 |
 | 客户端 UI | React 18(运行时由宿主平台模块表提供),`conversation.view` 槽 + host webserver 数据路由;官方组件库 `@deepseek-ai/dsh-client-ui-primitives`(devDependency,平台 seed 直接 value-import) |
 
 > 当项目技术栈发生变化时需要自主更新并告知用户
@@ -287,7 +287,7 @@ dsh-system-monitor-plugin/
 │       ├── zh-CN.ini           # 简体中文
 │       └── en-US.ini           # 英文
 ├── docs/
-│   ├── dsh-dev-docs/dsh-0.1.1-rc.2/   # dsh 官方插件开发文档(速查见 index.agent.md)
+│   ├── dsh-dev-docs/dsh-0.1.5-rc.1/   # dsh 官方插件开发文档(速查见 index.agent.md)
 │   ├── repo-spec/tag-release-spec.md  # Tag 与 Release 规范
 │   ├── tech-spec/translation-ini.md   # 翻译文件规范
 │   └── v0.1.0-进程汇报机制与规范.md     # 机制与规范版本文档(git 忽略)
@@ -392,8 +392,9 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 ### 会话交接要点
 
 - 完整会话交接提示见 `.agents/NEXT_SESSION.md`(项目现状、客户端面契约踩坑、部署与验证方法、待办、技能;随工作区维护,不随包发布);本段仅保留最常查要点:
+- WSL 部署测试经验见 `.agents/wsl-deploy-testing.md`(部署步骤、服务端/浏览器端验证清单、常见问题排查、0.1.5-rc.1 待复验点;实机测试由人工完成,复验结论回写该文件与 NEXT_SESSION.md);
 - 客户端面契约:包 `exports` 必须含 `"./package.json"`;client bundle 的 `module`/`exports` 定义须并入 banner(tsdown 0.22 无 intro);
-- WSL 发布版部署:客户端面托管需以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web`;开发迭代用直接部署工作流(复制 `dist/`、`package.json`、`cordis.patch.yml` 覆盖 profile 包目录);tarball 分发取 `release/`;
+- WSL 发布版部署:客户端面托管以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web`(0.1.5-rc.1 实测该方案托管正常,不带 NODE_PATH 未复核);0.1.5-rc.1 客户端托管 URL 为批量格式 `/plugins/??<包名>/client.js&rev=...`(旧单包路径 404)、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌);开发迭代用直接部署工作流(复制 `dist/`、`package.json`、`cordis.patch.yml` 覆盖 profile 包目录);tarball 分发取 `release/`;
 - 未完成事项:macOS 平台适配(见 `docs/v1.0.0-前驱版本待办排期清单.md`,未实施);Linux(含 WSL)采集已实现。
 
 ### 开发经验
@@ -411,7 +412,7 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - 客户端发包契约:`exports` 必须含 `"./package.json"`(宿主 client-modules 用 `require.resolve('<包名>/package.json')` 定位,缺此导出会被 exports 拦截拒绝);
 - client bundle 包装:tsdown 0.22 无 `intro` 选项(静默忽略),`module`/`exports` 定义必须并入 `banner`(否则浏览器端执行时 `exports is not defined` 导致插件加载失败);
 - 客户端 UI 组件:官方平台 seed 包 `@deepseek-ai/dsh-client-ui-primitives`(StateDot/Pill/Button 等)可直接 value-import(构建时外部化,运行时由宿主提供),其类型以 devDependency 引入;内容列宽与视觉对齐宿主 `--dsh-chat-content-width` 等 CSS 变量;`--dsw-alias-*` 为官方语义 token 体系;
-- WSL/发布版部署:客户端面发现基于 CLI 包解析上下文(0.1.1-rc.2),第三方 profile 插件需以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web` 才能被托管(`/plugins/<包名>/client.js` 200 且注入 `__DSH_BOOT__`);服务端不受影响;
+- WSL/发布版部署:客户端面发现机制(0.1.5-rc.1)优先走 Loader 自身解析(`locatePkgJson` 经 loader `internal.resolveSync` 后取最近祖先 manifest),无 Node 内部时才回退 `createRequire().resolve('<包名>/package.json')`;实测(`NODE_PATH=<profile>/node_modules` 启动)客户端面托管正常(BOOT 注入条目、批量 URL 200),不带 NODE_PATH 未复核;0.1.5-rc.1 托管 URL 为批量格式 `/plugins/??<包名>/client.js&rev=...`、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌),插件自定义数据路由(如 `/api/system-monitor/snapshot`)无需认证;服务端不受影响;
 - 直接部署工作流:构建后把 `dist/`(构建产物)、`package.json`、`cordis.patch.yml` 直接复制进 profile 的 `node_modules/<包名>/` 覆盖,重启 dsh web 即可生效(client.js 变化走 rev 刷新),免去 pack/add 往返;tarball 分发统一取 `release/`(`pnpm pack` 归位);
 - 部署测试规则:部署只负责把最新构建的插件包安装进 WSL dsh profile(直接复制或 `dsh plugin add`),**不自动启动 3081 服务**,启动由用户手动执行(`NODE_PATH=<profile>/node_modules dsh web --no-open --port 3081`);
 - Windows 沙箱:PowerShell 每次调用独立无状态,必要时传 `workdir`;控制台中文乱码不代表文件损坏(UTF-8 正常)。
