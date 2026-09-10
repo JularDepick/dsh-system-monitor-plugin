@@ -291,6 +291,9 @@ dsh-system-monitor-plugin/
 │   ├── repo-spec/tag-release-spec.md  # Tag 与 Release 规范
 │   ├── tech-spec/translation-ini.md   # 翻译文件规范
 │   └── v0.1.0-进程汇报机制与规范.md     # 机制与规范版本文档(git 忽略)
+├── scripts/                    # 构建辅助脚本
+│   ├── clean-release.cjs       # build 前置:清空 release/ 旧包
+│   └── pack-to-release.cjs     # postpack:tarball 归位 release/
 ├── AGENTS.md                  # 开发协作守则与项目信息
 ├── version.index.md           # 版本号索引
 ├── README.md                  # 中文主 README

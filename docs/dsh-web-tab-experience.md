@@ -126,4 +126,4 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
 | `docs/web-styling.md` | 样式 token 与组件规则 |
 | `packages/host/webserver/src/index.ts` | webserver 服务(register 路由扩展点) |
 
-> 本项目实例:dsh-wakatime-plugin 在会话区域注册 wakatime 标签页(conversation.view 槽,order 20),数据通道走 host webserver 路由(`/api/wakatime/*`),并注册 zh/en 字典跟随 dsh web 语言;相关项目细节见根目录 `AGENTS.md` 设计细节段。
+> 本项目实例:dsh-system-monitor-plugin 在会话区域注册「系统监控」标签页(conversation.view 槽,id `system-monitor`,order 30),数据通道走 host webserver 路由(`/api/system-monitor/snapshot`),tab 标签文案随界面语言切换;相关项目细节见根目录 `AGENTS.md` 设计细节段。
