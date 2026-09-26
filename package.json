@@ -2,7 +2,7 @@
   "name": "dsh-system-monitor-plugin",
   "version": "0.1.1",
   "description": "监控 dsh 进程及其子进程的资源占用,提供进程句柄汇报工具与 UI 面板展示",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JularDepick/dsh-system-monitor-plugin.git"
