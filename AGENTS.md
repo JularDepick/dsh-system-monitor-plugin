@@ -234,7 +234,7 @@ dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用�
 
 - 插件命名遵循 `dsh-<核心名称>-plugin` 规范,核心名称 `system-monitor`;
 - 项目文档语言核心为中文:主 README 为 `README.md`(中文),英文为额外文档 `README_en-US.md`;
-- 目标 dsh 版本 `0.1.5-rc.1`,Release 命名绑定该版本(见 `docs/repo-spec/tag-release-spec.md`)。
+- 目标 dsh 版本 `0.1.7-rc.2`,Release 命名绑定该版本(见 `docs/repo-spec/tag-release-spec.md`)。
 
 ### 技术栈
 
@@ -243,8 +243,8 @@ dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用�
 | 语言 | TypeScript,ESM(`type: module`) |
 | 构建 | tsdown(构建产物输出 `dist/`;pack tarball 归位 `release/`,build 前置清空 release 旧包) |
 | 包管理 | pnpm |
-| 目标 dsh 版本 | 0.1.5-rc.1 |
-| 运行时依赖 | `@deepseek-ai/cordis` 4.0.2、`@deepseek-ai/schemastery` 3.18.2、`@deepseek-ai/dsh-tools` 0.1.5-rc.1 |
+| 目标 dsh 版本 | 0.1.7-rc.2 |
+| 运行时依赖 | `@deepseek-ai/schemastery` 3.18.4(`dependencies`,无状态工具包);`@deepseek-ai/cordis` 4.0.4 与 `@deepseek-ai/dsh-tools` 0.1.7-rc.2(`peerDependencies` + `devDependencies`,与宿主共享实例,运行时由宿主/profile 提供) |
 | 客户端 UI | React 18(运行时由宿主平台模块表提供),`conversation.view` 槽 + host webserver 数据路由;官方组件库 `@deepseek-ai/dsh-client-ui-primitives`(devDependency,平台 seed 直接 value-import) |
 
 > 当项目技术栈发生变化时需要自主更新并告知用户
@@ -287,7 +287,7 @@ dsh-system-monitor-plugin/
 │       ├── zh-CN.ini           # 简体中文
 │       └── en-US.ini           # 英文
 ├── docs/
-│   ├── dsh-dev-docs/dsh-0.1.5-rc.1/   # dsh 官方插件开发文档(速查见 index.agent.md)
+│   ├── dsh-dev-docs/dsh-0.1.7-rc.2/   # dsh 官方插件开发文档(速查见 index.agent.md)
 │   ├── repo-spec/tag-release-spec.md  # Tag 与 Release 规范
 │   ├── tech-spec/translation-ini.md   # 翻译文件规范
 │   └── v0.1.0-进程汇报机制与规范.md     # 机制与规范版本文档(git 忽略)
@@ -342,11 +342,14 @@ dsh-system-monitor-plugin/
 - 系统进程查询超时:10000 毫秒;Linux 时钟节拍:100(`LINUX_CLK_TCK`)
 - 操作系统识别:快照平台字段为运行平台显示名,Linux 经 `/etc/os-release` 识别发行版与版本(如 Ubuntu 24.04.4 LTS),不做宿主机穿透识别
 - 面板形态:会话区域标签栏「系统监控」tab(客户端半身,`conversation.view` 槽,id `system-monitor`,排序 30,标签文案跟随界面语言);数据经 host webserver 端点 `/api/system-monitor/snapshot` 同源轮询(1000 毫秒);UI 对齐 dsh web 原版风格:内容列宽复用宿主 `--dsh-chat-content-width` 等变量与 `--dsw-alias-*` 语义 token,统计卡 KPI、官方 `StateDot` 状态徽章(正常/降级)、meter 占用进度条、高占用警示(阈值 90)、骨架屏与空/错误态;页脚项目与作者超链接随常量可替换
+- 面板容器契约(0.1.7-rc.2 发布包核对,与 0.1.5-rc.1 一致):宿主视图区与滚动容器均无内边距、槽锚点为 `display:contents`,故面板自带内边距(`PANEL_TOP_PADDING`/`PANEL_BOTTOM_PADDING`/`PANEL_COLUMN_GUTTER`,`max-width` 为内容列宽加两侧 gutter 以保持内容宽度与宿主对话列一致);面板根为纵向 flex 滚动容器(`flex:0 1 auto; min-height:0; overflow-y:auto`),并在注入样式中用 `.sm-column > * { flex: none; }` 锁死直接子块不参与压缩(卡片带 `overflow:hidden` 时 flex 自动最小尺寸为 0,会被压扁并裁掉内容);进度条容器用块级 flex 且数值槽固定宽度(`PANEL_CPU_VALUE_WIDTH`/`PANEL_MEMORY_VALUE_WIDTH`),避免行内级 flex 基线退化导致的行高撑高与逐行漂移;审计与实测记录见 `temp/ui-audit/`
 - 编译产物:`dist/index.mjs` 与 `dist/index.d.mts`(服务端)、`dist/client.js`(客户端,固定名);pack tarball 归位 `release/`(build 前置清空 release 旧包,postpack 归位新包);`package.json` 的 `main`/`types` 与真实产物对齐
+- 依赖分区:`@deepseek-ai/cordis` 与 `@deepseek-ai/dsh-tools` 同时声明在 `peerDependencies` 与 `devDependencies`(与宿主共享实例,运行时由宿主/profile 提供;devDependency 副本供类型检查与独立测试);`@deepseek-ai/schemastery` 作为无状态工具包留在 `dependencies`;客户端面依赖包(ui-conversation/ui-primitives/ui-renderer/ui-slots)以 `devDependencies` 引入
+- 客户端面声明:`package.json` 的 `dsh.client` 为 `{ platform: 'web', inject: ['@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-conversation'] }`;`inject` 填真实包名(供客户端组合排序,非 Cordis 服务注入),客户端服务的注入由 `src/client/index.tsx` 导出的 `inject` 承担
 - 文档语言核心:中文(`README.md` 为中文主 README,英文为额外文档)
 - 翻译/加载行为:未命中回退默认语言,文件缺失回退空表由主逻辑兜底
 - 维护规则:按需核对 `docs/dsh-dev-docs/<版本>/` 与官方仓库 `docs/user/develop` 是否过时,过时则按官方收录流程更新到新版本目录
-- 全局常量索引(文件路径与名称):`src/constants.ts` — `PLUGIN_NAME`、`DEFAULT_LANGUAGE`、`FALLBACK_LANGUAGE`、`TRANSLATION_DIR`、`DEFAULT_POLL_INTERVAL`、`REPORT_TOOL_NAME`、`QUERY_TIMEOUT_MS`、`LINUX_CLK_TCK`、`MONITOR_DATA_PATH`、`CLIENT_POLL_INTERVAL`、`PANEL_TAB_ID`、`PANEL_TAB_ORDER`、`PANEL_AUTHOR`、`PANEL_AUTHOR_URL`、`PANEL_PROJECT_URL`、`PANEL_HIGH_LOAD_THRESHOLD`
+- 全局常量索引(文件路径与名称):`src/constants.ts` — `PLUGIN_NAME`、`DEFAULT_LANGUAGE`、`FALLBACK_LANGUAGE`、`TRANSLATION_DIR`、`DEFAULT_POLL_INTERVAL`、`REPORT_TOOL_NAME`、`QUERY_TIMEOUT_MS`、`LINUX_CLK_TCK`、`MONITOR_DATA_PATH`、`CLIENT_POLL_INTERVAL`、`PANEL_TAB_ID`、`PANEL_TAB_ORDER`、`PANEL_AUTHOR`、`PANEL_AUTHOR_URL`、`PANEL_PROJECT_URL`、`PANEL_HIGH_LOAD_THRESHOLD`、`PANEL_COLUMN_GUTTER`、`PANEL_TOP_PADDING`、`PANEL_BOTTOM_PADDING`、`PANEL_STACK_GAP`、`PANEL_CPU_VALUE_WIDTH`、`PANEL_MEMORY_VALUE_WIDTH`
 
 > 主要指可个性化修改但不影响项目核心功能的设计细节,某个项第一次使用时一般需要取默认值方便开发者知悉和维护,具体包括但不限于:
 >
@@ -362,7 +365,7 @@ dsh-system-monitor-plugin/
 
 ### 版本号索引
 
-- 当前版本:v0.1.0
+- 当前版本:v0.1.1
 
 - `version.index.md` 定位与维护方式:记录项目当前版本号,并列出版本号迭代需同步更新的文件清单(文件路径与行号);读取时先查看 git 历史、配置文件、关键文档,向用户汇报确认真实版本号,需要时更新;版本号迭代时按清单同步更新所列文件中的版本号,允许继续新增清单项;版本号格式遵循 `docs/repo-spec/tag-release-spec.md`
 
@@ -374,13 +377,15 @@ dsh-system-monitor-plugin/
 
 ```
 pnpm install                          # 安装依赖
+pnpm typecheck                        # tsc --noEmit 类型检查
 pnpm build                            # tsdown 构建产物到 dist/(前置清空 release/ 旧包)
+node .agents/smoke-0.1.7-rc2.mjs      # 构建产物冒烟断言(.agents/ 不随包发布)
 pnpm pack                             # 打包 npm tarball(prepare 自动先构建,postpack 归位 release/)
 npm publish --dry-run                 # npmjs 发布预演校验
 dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 ```
 
-依赖缓存与内容寻址 store 固定在工作区内(`storeDir` 见 `pnpm-workspace.yaml`,相对路径),沙箱环境避免写工作区外被拒。
+依赖缓存与内容寻址 store 固定在工作区内(`storeDir` 见 `pnpm-workspace.yaml`,相对路径),沙箱环境避免写工作区外被拒。pnpm 的 `minimumReleaseAge` 供应链策略会拦截刚发布的 rc 包,单次安装可加 `--config.minimumReleaseAge=0` 覆盖。
 
 ### 项目启动
 
@@ -395,10 +400,10 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 ### 会话交接要点
 
 - 完整会话交接提示见 `.agents/NEXT_SESSION.md`(项目现状、客户端面契约踩坑、部署与验证方法、待办、技能;随工作区维护,不随包发布);本段仅保留最常查要点:
-- WSL 部署测试经验见 `.agents/wsl-deploy-testing.md`(部署步骤、服务端/浏览器端验证清单、常见问题排查、0.1.5-rc.1 待复验点;实机测试由人工完成,复验结论回写该文件与 NEXT_SESSION.md);
+- WSL 部署测试经验见 `.agents/wsl-deploy-testing.md`(部署步骤、服务端/浏览器端验证清单、常见问题排查、0.1.7-rc.2 待复验点;实机测试由人工完成,复验结论回写该文件与 NEXT_SESSION.md);
 - 客户端面契约:包 `exports` 必须含 `"./package.json"`;client bundle 的 `module`/`exports` 定义须并入 banner(tsdown 0.22 无 intro);
-- WSL 发布版部署:客户端面托管以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web`(0.1.5-rc.1 实测该方案托管正常,不带 NODE_PATH 未复核);0.1.5-rc.1 客户端托管 URL 为批量格式 `/plugins/??<包名>/client.js&rev=...`(旧单包路径 404)、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌);开发迭代用直接部署工作流(复制 `dist/`、`package.json`、`cordis.patch.yml` 覆盖 profile 包目录);tarball 分发取 `release/`;
-- 未完成事项:macOS 平台适配(见 `docs/v1.0.0-前驱版本待办排期清单.md`,未实施);Linux(含 WSL)采集已实现。
+- WSL 发布版部署:客户端面托管以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web`(0.1.5-rc.1 实测该方案托管正常,不带 NODE_PATH 未复核;0.1.7-rc.2 按发布包静态核对机制未变,待实机复验);0.1.7-rc.2 客户端托管 URL 仍为批量格式 `/plugins/??<包名>/client.js&rev=...`(旧单包路径 404)、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌);开发迭代用直接部署工作流(复制 `dist/`、`package.json`、`cordis.patch.yml` 覆盖 profile 包目录);tarball 分发取 `release/`;
+- 未完成事项:`v0.1.1`(适配 dsh 0.1.7-rc.2)尚未实机复验;macOS 平台适配(见 `docs/v1.0.0-前驱版本待办排期清单.md`,未实施);Linux(含 WSL)采集已实现。
 
 ### 开发经验
 
@@ -411,11 +416,12 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - 目录组织:入口、配置 schema、全局常量独立成文件,机制按模块分目录,模块内拆分类型定义与实现;占位方法以抛错或空值标明"尚未实现";
 - 版本对齐:先查本地已装 dsh 各包版本,与 npm registry 比对,对齐到本地运行版本(带 rc 的包核对 registry 的 next 标签);
 - 沙箱环境:npm/pnpm 写缓存到工作区外会被拒,store/cache/state 重定向到工作区内;tsdown 产物为 `.mjs/.d.mts`,`package.json` 的 `main`/`types` 必须与真实产物对齐;Node 动态 import 绝对路径必须转 `file://`;
-- 冒烟测试:临时脚本放 `.agents/`,对构建产物断言入口导出、配置默认值、假 ctx 验证装配与工具注册、翻译加载回退;`pnpm pack` 后列 tarball 内容核对打包边界(`files` 收窄,避免源码混入);
+- junction 解析(Node 26/Windows):Node 26 的 JS 版 `fs.realpathSync` 不再解析 Windows junction(仅 `realpathSync.native` 解析),而 pnpm 隔离布局在 Windows 上用 junction 链接顶层包,嵌套依赖的解析基点因此停在 junction 路径上,本地 `node` 直接运行构建产物或构建工具时报 `ERR_MODULE_NOT_FOUND`(实测 `@deepseek-ai/schemastery`/`@deepseek-ai/cordis` → `@deepseek-ai/cosmokit`、`tsdown` → `ansis`);`pnpm-workspace.yaml` 设 `publicHoistPattern: ['*']` 把依赖公开提升到根 node_modules 规避,仅影响本地开发环境布局,不随包发布;
+- 冒烟测试:临时脚本放 `.agents/`,对构建产物断言入口导出、配置默认值、假 ctx 验证装配与工具注册、工具边界校验与去重回执、采集器纯逻辑、翻译 INI 与客户端字典双向一致、client bundle 包装头与外部化清单、依赖分区与 `dsh.client` 声明;`pnpm pack` 后列 tarball 内容核对打包边界(`files` 收窄,避免源码混入)与包内产物逐字节一致;
 - 客户端发包契约:`exports` 必须含 `"./package.json"`(宿主 client-modules 用 `require.resolve('<包名>/package.json')` 定位,缺此导出会被 exports 拦截拒绝);
 - client bundle 包装:tsdown 0.22 无 `intro` 选项(静默忽略),`module`/`exports` 定义必须并入 `banner`(否则浏览器端执行时 `exports is not defined` 导致插件加载失败);
 - 客户端 UI 组件:官方平台 seed 包 `@deepseek-ai/dsh-client-ui-primitives`(StateDot/Pill/Button 等)可直接 value-import(构建时外部化,运行时由宿主提供),其类型以 devDependency 引入;内容列宽与视觉对齐宿主 `--dsh-chat-content-width` 等 CSS 变量;`--dsw-alias-*` 为官方语义 token 体系;
-- WSL/发布版部署:客户端面发现机制(0.1.5-rc.1)优先走 Loader 自身解析(`locatePkgJson` 经 loader `internal.resolveSync` 后取最近祖先 manifest),无 Node 内部时才回退 `createRequire().resolve('<包名>/package.json')`;实测(`NODE_PATH=<profile>/node_modules` 启动)客户端面托管正常(BOOT 注入条目、批量 URL 200),不带 NODE_PATH 未复核;0.1.5-rc.1 托管 URL 为批量格式 `/plugins/??<包名>/client.js&rev=...`、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌),插件自定义数据路由(如 `/api/system-monitor/snapshot`)无需认证;服务端不受影响;
+- WSL/发布版部署:客户端面发现机制优先走 Loader 自身解析(`locatePkgJson` 经 loader `internal.resolveSync` 后取最近祖先 manifest),无 Node 内部时才回退 `createRequire().resolve('<包名>/package.json')`(0.1.5-rc.1 与 0.1.7-rc.2 发布包核对同构);0.1.5-rc.1 实测(`NODE_PATH=<profile>/node_modules` 启动)客户端面托管正常(BOOT 注入条目、批量 URL 200),不带 NODE_PATH 未复核,0.1.7-rc.2 待实机复验;0.1.7-rc.2 托管 URL 仍为批量格式 `/plugins/??<包名>/client.js&rev=...`、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌),插件自定义数据路由(如 `/api/system-monitor/snapshot`)无需认证;服务端不受影响;
 - 直接部署工作流:构建后把 `dist/`(构建产物)、`package.json`、`cordis.patch.yml` 直接复制进 profile 的 `node_modules/<包名>/` 覆盖,重启 dsh web 即可生效(client.js 变化走 rev 刷新),免去 pack/add 往返;tarball 分发统一取 `release/`(`pnpm pack` 归位);
 - 部署测试规则:部署只负责把最新构建的插件包安装进 WSL dsh profile(直接复制或 `dsh plugin add`),**不自动启动 3081 服务**,启动由用户手动执行(`NODE_PATH=<profile>/node_modules dsh web --no-open --port 3081`);
 - Windows 沙箱:PowerShell 每次调用独立无状态,必要时传 `workdir`;控制台中文乱码不代表文件损坏(UTF-8 正常)。

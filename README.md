@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.1.0-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.1.0)
+[![Version](https://img.shields.io/badge/Version-0.1.1-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.1.1)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](./LICENSE)
 
@@ -21,6 +21,8 @@
 
 ## 安装
 
+本版本适配 dsh 0.1.7-rc.2。
+
 将本插件安装到 dsh profile:
 
 ```sh
@@ -30,7 +32,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 使用 tarball 分发时:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.1.0.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.1.1.tgz
 ```
 
 ## 使用

@@ -53,3 +53,19 @@ export const PANEL_PROJECT_URL = 'https://github.com/JularDepick/dsh-system-moni
 
 /** 面板高占用警示阈值(百分比,CPU 或内存占用超过时高亮) */
 export const PANEL_HIGH_LOAD_THRESHOLD = 90
+
+/** 面板内容区左右内边距(像素;宿主视图区不提供内边距,窗口窄于内容列宽时由它兜底留白) */
+export const PANEL_COLUMN_GUTTER = 16
+
+/** 面板顶部内边距(像素;分隔宿主标签栏下边框) */
+export const PANEL_TOP_PADDING = 16
+
+/** 面板底部内边距(像素) */
+export const PANEL_BOTTOM_PADDING = 24
+
+/** 面板区块纵向间距(像素) */
+export const PANEL_STACK_GAP = 6
+
+/** 占用进度条数值槽宽度(像素,右对齐;固定宽度使同列进度条左右边界不随数值位数漂移) */
+export const PANEL_CPU_VALUE_WIDTH = 44
+export const PANEL_MEMORY_VALUE_WIDTH = 104

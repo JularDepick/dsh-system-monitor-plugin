@@ -22,10 +22,16 @@ import {
   MONITOR_DATA_PATH,
   PANEL_AUTHOR,
   PANEL_AUTHOR_URL,
+  PANEL_BOTTOM_PADDING,
+  PANEL_COLUMN_GUTTER,
+  PANEL_CPU_VALUE_WIDTH,
   PANEL_HIGH_LOAD_THRESHOLD,
+  PANEL_MEMORY_VALUE_WIDTH,
   PANEL_PROJECT_URL,
+  PANEL_STACK_GAP,
   PANEL_TAB_ID,
   PANEL_TAB_ORDER,
+  PANEL_TOP_PADDING,
   PLUGIN_NAME,
 } from '../constants'
 import { t } from './i18n'
@@ -65,23 +71,31 @@ const panelCss = `
 .sm-skeleton { background: linear-gradient(90deg, var(--dsw-alias-interactive-bg-hover) 25%, var(--dsw-alias-border-l1) 50%, var(--dsw-alias-interactive-bg-hover) 75%); background-size: 400% 100%; animation: sm-shimmer 1.4s ease-in-out infinite; }
 @keyframes sm-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .sm-skeleton { animation: none; } }
+/* 面板根是纵向 flex 滚动容器:子块一律不参与压缩。
+   卡片带 overflow:hidden,其 flex 自动最小尺寸按规范为 0,不锁死会被压扁并裁掉表格内容 */
+.sm-column > * { flex: none; }
 `
 
 /**
- * 内容列:与宿主样式解耦,只继承关键颜色等 CSS 变量。
- * 显式声明字体/字号/行高/颜色/盒模型,不依赖宿主继承;
- * 上下左右内边距由宿主滚动容器提供,组件不再叠加。
+ * 内容列:宿主视图区与滚动容器均无内边距(0.1.7-rc.2 发布包核对,与 0.1.5-rc.1 一致),
+ * 间距与滚动兜底须由组件自带。
+ * 内容宽与宿主对话列一致(max-width 额外加左右 gutter,窗口更窄时由 gutter 兜底);
+ * flex/minHeight/overflow 使宿主 composer-overlay 模式(视图区定高且 overflow:hidden)
+ * 下面板自身成为滚动容器,长进程列表不会被裁掉。
  */
 const columnStyle: CSSProperties = {
-  maxWidth: 'var(--dsh-chat-content-width, 748px)',
+  maxWidth: `calc(var(--dsh-chat-content-width, 748px) + ${PANEL_COLUMN_GUTTER * 2}px)`,
   margin: '0 auto',
   display: 'flex',
   flexDirection: 'column',
-  gap: 6,
+  flex: '0 1 auto',
+  minHeight: 0,
+  overflowY: 'auto',
+  gap: PANEL_STACK_GAP,
   boxSizing: 'border-box',
-  fontFamily: 'var(--ds-font-family, ui-sans-serif, system-ui, sans-serif)',
+  padding: `${PANEL_TOP_PADDING}px ${PANEL_COLUMN_GUTTER}px ${PANEL_BOTTOM_PADDING}px`,
   fontSize: 13,
-  lineHeight: 20,
+  lineHeight: '20px',
   color: 'var(--dsw-alias-label-primary)',
   textAlign: 'left',
 }
@@ -99,7 +113,7 @@ const cellStyle: CSSProperties = {
   boxSizing: 'border-box',
   padding: '2px 6px',
   fontSize: 13,
-  lineHeight: 15,
+  lineHeight: '15px',
   textAlign: 'center',
   fontFamily: 'inherit',
 }
@@ -121,7 +135,7 @@ function StatusBadge(props: { tone: 'ok' | 'warn' | 'error'; label: string }): R
   const color = props.tone === 'ok'
     ? 'var(--dsw-alias-state-success-primary)'
     : props.tone === 'warn'
-      ? 'var(--dsw-alias-state-warn-primary)'
+      ? 'var(--dsw-alias-state-warn-label)'
       : 'var(--dsw-alias-state-error-primary)'
   return (
     <span
@@ -131,7 +145,7 @@ function StatusBadge(props: { tone: 'ok' | 'warn' | 'error'; label: string }): R
         gap: 6,
         color,
         fontSize: 12,
-        lineHeight: 14,
+        lineHeight: '14px',
         fontWeight: 500,
         whiteSpace: 'nowrap',
       }}
@@ -142,19 +156,31 @@ function StatusBadge(props: { tone: 'ok' | 'warn' | 'error'; label: string }): R
   )
 }
 
-/** 占用进度条:原版 meter 栏(4px 圆角轨道)+ 数值文本(数值不以颜色为唯一表意) */
-function UsageBar(props: { value: number; high: boolean; text: string; label: string }): ReactNode {
+/**
+ * 占用进度条:原版 meter 栏(4px 圆角轨道)+ 数值文本(数值不以颜色为唯一表意)。
+ * 容器用块级 flex 而非行内级 flex:行内级 flex 的基线取自第一个子项,
+ * 而首项是无文本的轨道,基线退化为轨道底边,会把整组下推并撑高行框。
+ * 数值槽宽度固定且右对齐,进度条左右边界因此不随数值位数逐行漂移。
+ */
+function UsageBar(props: {
+  value: number
+  high: boolean
+  text: string
+  label: string
+  valueWidth: number
+}): ReactNode {
   const clamped = Math.min(100, Math.max(0, props.value))
   return (
     <div
       style={{
-        display: 'inline-flex',
+        display: 'flex',
         alignItems: 'center',
         gap: 6,
         justifyContent: 'center',
+        height: 15,
         color: props.high ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)',
         fontSize: 11,
-        lineHeight: 14,
+        lineHeight: '14px',
         fontVariantNumeric: 'tabular-nums',
       }}
     >
@@ -183,7 +209,7 @@ function UsageBar(props: { value: number; high: boolean; text: string; label: st
           }}
         />
       </div>
-      <span>{props.text}</span>
+      <span style={{ width: props.valueWidth, textAlign: 'right', whiteSpace: 'nowrap' }}>{props.text}</span>
     </div>
   )
 }
@@ -200,10 +226,10 @@ function TableHeader(props: { processes: number }): ReactNode {
         borderBottom: '1px solid var(--dsw-alias-border-l1)',
       }}
     >
-      <span style={{ color: 'var(--dsw-alias-label-secondary)', fontSize: 13, lineHeight: 15, fontWeight: 500 }}>
+      <span style={{ color: 'var(--dsw-alias-label-secondary)', fontSize: 13, lineHeight: '15px', fontWeight: 500 }}>
         {t('table.title')}
       </span>
-      <span style={{ color: 'var(--dsw-alias-label-caption)', fontSize: 11, lineHeight: 14, fontVariantNumeric: 'tabular-nums' }}>
+      <span style={{ color: 'var(--dsw-alias-label-caption)', fontSize: 11, lineHeight: '14px', fontVariantNumeric: 'tabular-nums' }}>
         {t('table.count', { count: props.processes })}
       </span>
     </div>
@@ -241,7 +267,7 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
   // 加载中:骨架屏占位
   if (!snapshot && !unavailable) {
     return (
-      <div style={columnStyle}>
+      <div className="sm-column" style={columnStyle}>
         {[0, 1].map((index) => (
           <div key={index} className="sm-skeleton" style={{ height: 52, borderRadius: 12 }} />
         ))}
@@ -253,9 +279,9 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
   // 数据源不可用且无旧快照:警告条(自动轮询重试)
   if (!snapshot) {
     return (
-      <div style={columnStyle}>
+      <div className="sm-column" style={columnStyle}>
         <div style={{ ...cardStyle, background: 'var(--dsw-alias-state-warn-tertiary)', padding: '6px 10px' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--dsw-alias-state-warn-primary)', fontSize: 13, lineHeight: 15 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--dsw-alias-state-warn-label)', fontSize: 13, lineHeight: '15px' }}>
             <StateDot state="warning" size={8} />
             {t('error.unavailable')}
           </span>
@@ -268,7 +294,7 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
   const processes = snapshot.processes
   const summary: { key: string; value: string }[] = [
     { key: 'summary.sampledAt', value: formatDateTime(snapshot.sampledAt) },
-    { key: 'summary.platform', value: snapshot.platform || '未知' },
+    { key: 'summary.platform', value: snapshot.platform || t('summary.platformUnknown') },
     { key: 'summary.pollInterval', value: `${snapshot.pollInterval}ms` },
     { key: 'summary.cpuCount', value: String(snapshot.cpuCount) },
     { key: 'summary.totalMemory', value: `${formatGigabytes(snapshot.totalMemoryBytes)}GB` },
@@ -276,15 +302,15 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
   ]
 
   return (
-    <div style={columnStyle}>
+    <div className="sm-column" style={columnStyle}>
       <style>{panelCss}</style>
-      {/* 统计卡:KPI 与状态 */}
-      <div style={{ ...cardStyle, background: 'var(--dsw-alias-interactive-bg-hover)', padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      {/* 统计卡:KPI 与状态(静态面色用层级 token,不用交互态 hover token) */}
+      <div style={{ ...cardStyle, background: 'var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, var(--dsw-alias-interactive-bg-hover)))', padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-          <span style={{ color: 'var(--dsw-alias-label-primary)', fontSize: 20, lineHeight: 22, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: 'var(--dsw-alias-label-primary)', fontSize: 20, lineHeight: '22px', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
             {processes.length}
           </span>
-          <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, lineHeight: 14 }}>{t('stat.processes')}</span>
+          <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, lineHeight: '14px' }}>{t('stat.processes')}</span>
         </div>
         {snapshot.degraded ? (
           <StatusBadge tone="warn" label={t('stat.degraded')} />
@@ -300,7 +326,7 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
           gap: '0 12px',
           color: 'var(--dsw-alias-label-tertiary)',
           fontSize: 11,
-          lineHeight: 14,
+          lineHeight: '14px',
         }}
       >
         {summary.map((item) => (
@@ -314,11 +340,11 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
       <div style={cardStyle}>
         <TableHeader processes={processes.length} />
         {processes.length === 0 ? (
-          <div style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 13, lineHeight: 15, textAlign: 'center', padding: '10px 0' }}>
+          <div style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 13, lineHeight: '15px', textAlign: 'center', padding: '10px 0' }}>
             {t('empty.noProcesses')}
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', borderSpacing: 0 }} aria-label="系统监控进程资源占用表">
+          <table style={{ width: '100%', borderCollapse: 'collapse', borderSpacing: 0 }} aria-label={t('table.ariaLabel')}>
             <thead>
               <tr>
                 <th scope="col" style={headCellStyle}>{t('table.column.process')}</th>
@@ -329,22 +355,24 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
               </tr>
             </thead>
             <tbody>
-              {processes.map((sample: ResourceSample) => {
+              {processes.map((sample: ResourceSample, index: number) => {
                 const cpuHigh = sample.cpuPercent > PANEL_HIGH_LOAD_THRESHOLD
                 const memoryHigh = sample.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
+                const last = index === processes.length - 1
                 return (
-                  <tr key={sample.handle.pid} style={{ borderBottom: '1px solid var(--dsw-alias-border-l1)' }}>
+                  <tr key={sample.handle.pid} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
                     <td style={dataCellStyle}>{sample.handle.name ?? ''}</td>
                     <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample.handle.pid}</td>
                     <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample.handle.parentPid ?? ''}</td>
                     <td style={dataCellStyle}>
-                      <UsageBar value={sample.cpuPercent} high={cpuHigh} text={formatPercent(sample.cpuPercent)} label={t('aria.usage.cpu', { name: sample.handle.name ?? sample.handle.pid })} />
+                      <UsageBar value={sample.cpuPercent} high={cpuHigh} text={formatPercent(sample.cpuPercent)} valueWidth={PANEL_CPU_VALUE_WIDTH} label={t('aria.usage.cpu', { name: sample.handle.name ?? sample.handle.pid })} />
                     </td>
                     <td style={dataCellStyle}>
                       <UsageBar
                         value={sample.memoryPercent}
                         high={memoryHigh}
                         text={`${formatGigabytes(sample.memoryBytes)}GB · ${formatPercent(sample.memoryPercent)}`}
+                        valueWidth={PANEL_MEMORY_VALUE_WIDTH}
                         label={t('aria.usage.memory', { name: sample.handle.name ?? sample.handle.pid })}
                       />
                     </td>
@@ -356,7 +384,7 @@ const MonitorTab = (_props: PropsRuntime<'conversation.view'>): ReactNode => {
         )}
       </div>
       {/* 页脚:项目与作者链接 */}
-      <div style={{ color: 'var(--dsw-alias-label-caption)', fontSize: 11, lineHeight: 14, textAlign: 'center' }}>
+      <div style={{ color: 'var(--dsw-alias-label-caption)', fontSize: 11, lineHeight: '14px', textAlign: 'center' }}>
         <a href={PANEL_PROJECT_URL} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
           {PLUGIN_NAME}
         </a>

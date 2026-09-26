@@ -4,3 +4,14 @@ packages:
 
 # 内容寻址 store 固定在工作区内(沙箱环境避免写工作区外被拒,相对本文件解析)
 storeDir: .pnpm-store
+
+# 公开提升全部依赖到根 node_modules
+#
+# 原因:Node 26 的 JS 版 realpathSync 不再解析 Windows junction(仅 realpathSync.native 解析),
+# 而 pnpm 隔离布局在 Windows 上用 junction 链接顶层包。嵌套依赖(如
+# @deepseek-ai/schemastery、@deepseek-ai/cordis → @deepseek-ai/cosmokit,tsdown → ansis)的
+# 解析基点因此停留在 junction 路径上,而 pnpm 私有提升的副本位于 .pnpm/node_modules,
+# 不在该路径的祖先链上,导致本地 node 直接运行构建产物或构建工具时 ERR_MODULE_NOT_FOUND。
+# 本项仅影响本地开发环境的 node_modules 布局,不随 npm 包发布,也不影响 dsh 运行时解析。
+publicHoistPattern:
+  - '*'
