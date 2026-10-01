@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.1.1-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.1.1)
+[![Version](https://img.shields.io/badge/Version-0.1.2-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.1.2)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -21,7 +21,7 @@
 
 ## 安装
 
-本版本适配 dsh 0.1.7-rc.2。
+本版本适配 dsh 0.2.0-rc.2。dsh 自 0.2.0-rc.2 起会强制校验插件的 dsh 前缀 `peerDependencies`（不匹配的插件在安装与启动时都被拒绝），因此插件版本必须与 dsh 版本对应安装。
 
 将本插件安装到 dsh profile:
 
@@ -32,7 +32,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 使用 tarball 分发时:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.1.1.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.1.2.tgz
 ```
 
 ## 使用

@@ -10,7 +10,7 @@
 
 import { defineConfig } from 'tsdown'
 
-/** 宿主冻结的平台模块表(dsh 0.1.7-rc.2 发布包核对,与 0.1.5-rc.1 逐项一致;客户端 bundle 一律外部化,运行时由宿主提供) */
+/** 宿主冻结的平台模块表(dsh 0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 逐项一致;客户端 bundle 一律外部化,运行时由宿主提供) */
 const PLATFORM_EXTERNALS = [
   'react',
   'react/jsx-runtime',

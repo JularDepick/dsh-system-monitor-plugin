@@ -1,10 +1,12 @@
-# dsh 插件开发文档（v0.1.7-rc.2）
+# dsh 插件开发文档（v0.2.0-rc.2）
 
 > 面向 Agent 的利用指南与速查：请查看 `index.agent.md`。
 
 [dsh](https://github.com/deepseek-ai/deepseek-harness) 官方插件开发文档的**中文版**合集索引。
 
-本目录存放 DeepSeek-Harness 官方仓库 `docs/user/develop/` 在版本 **0.1.7-rc.2**（npm 发布包版本号）时期的中文版（`.zh.md`）文档（英文原版见各 `.md`）。内容来源于官方仓库 master 分支，作为本项目开发 dsh 插件时的参考指引。
+本目录存放 DeepSeek-Harness 官方仓库 `docs/user/develop/` 在版本 **0.2.0-rc.2**（npm 发布包版本号）时期的中文版（`.zh.md`）文档（英文原版见各 `.md`）。内容来源于官方仓库 master 分支，作为本项目开发 dsh 插件时的参考指引。
+
+> 收录核对：0.2.0-rc.2 与 0.1.7-rc.2 的官方开发文档逐篇逐字节一致，故本次收录未产生内容变更，仅更新目录与索引页的版本标注。
 
 | 分块 | 作用 |
 |:---:|:---|

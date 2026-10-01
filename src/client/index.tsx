@@ -77,7 +77,7 @@ const panelCss = `
 `
 
 /**
- * 内容列:宿主视图区与滚动容器均无内边距(0.1.7-rc.2 发布包核对,与 0.1.5-rc.1 一致),
+ * 内容列:宿主视图区与滚动容器均无内边距(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致),
  * 间距与滚动兜底须由组件自带。
  * 内容宽与宿主对话列一致(max-width 额外加左右 gutter,窗口更窄时由 gutter 兜底);
  * flex/minHeight/overflow 使宿主 composer-overlay 模式(视图区定高且 overflow:hidden)
