@@ -15,7 +15,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { cpus, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
-import type { MonitorSnapshot, ProcessHandle, ProcessRecord, ResourceSample } from './types'
+import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
 
 /** 系统进程查询器接口(便于注入假实现测试) */
 export interface ProcessQuery {
@@ -230,6 +230,10 @@ export class ProcessCollector {
     private readonly rootPid: number,
     /** 系统进程查询器 */
     private readonly query: ProcessQuery = createPlatformQuery(),
+    /** 归属解析器:按当前采样进程集合给出「进程 → 会话」归属(缺省时不解析,样本无 owner) */
+    private readonly resolveOwners: (pids: readonly number[]) => Map<number, ProcessOwner> = () => new Map(),
+    /** 汇报句柄归属同步:句柄并入监控集合时把其会话标注告知归属解析器 */
+    private readonly onReported: (handle: ProcessHandle) => void = () => {},
   ) {}
 
   /** 执行一轮采集,失败不影响既有快照 */
@@ -277,7 +281,8 @@ export class ProcessCollector {
       .sort((a, b) => a - b)
     order.push(...extraReported)
 
-    // CPU 差分与内存换算
+    // CPU 差分与内存换算;归属解析按本轮采样集合进行(进程树 + 汇报句柄)
+    const owners = this.resolveOwners(order)
     const now = Date.now()
     const elapsed = this.lastSampledAt === 0 ? 0 : (now - this.lastSampledAt) / 1000
     const processes: ResourceSample[] = order.map((pid) => {
@@ -296,8 +301,10 @@ export class ProcessCollector {
         cpuPercent = ((record.cpuSeconds - previous) / elapsed / this.cpuCount) * 100
       }
       this.lastCpu.set(pid, record.cpuSeconds)
+      const owner = owners.get(pid)
       return {
         handle,
+        ...(owner === undefined ? {} : { owner }),
         cpuPercent,
         memoryBytes: record.workingSetBytes,
         memoryPercent: this.totalMemoryBytes > 0 ? (record.workingSetBytes / this.totalMemoryBytes) * 100 : 0,
@@ -318,9 +325,12 @@ export class ProcessCollector {
     return this.snapshot
   }
 
-  /** 合并 Agent 汇报句柄(重复按 pid 合并,存在性在下一轮采样确认) */
+  /** 合并 Agent 汇报句柄(重复按 pid 合并,存在性在下一轮采样确认;会话标注转交归属解析器) */
   mergeReported(handles: readonly ProcessHandle[]): void {
-    for (const handle of handles) this.reported.set(handle.pid, handle)
+    for (const handle of handles) {
+      this.reported.set(handle.pid, handle)
+      this.onReported(handle)
+    }
   }
 
   /** 获取最近一次面板快照,查询失败时为空 */

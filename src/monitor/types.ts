@@ -14,12 +14,30 @@ export interface ProcessHandle {
   name?: string
   /** 父进程标识(可选,用于表达树形关系) */
   parentPid?: number
+  /** 所属会话标识(可选,由 Agent 汇报时显式标注,用于对话维度分组) */
+  sessionId?: string
+}
+
+/**
+ * 进程归属:标识该进程属于哪个对话(会话)。
+ * 归属来源见 `attribution.ts`(子进程环境、终端 pid 映射、Agent 汇报),
+ * 仅用于面板分组展示,不改变资源采样口径。
+ */
+export interface ProcessOwner {
+  /** 会话标识(对话维度分组键) */
+  sessionId: string
+  /** 会话显示名(宿主会话标题;缺失时面板显示会话标识) */
+  label?: string
+  /** 是否由子会话(subagent)派生 */
+  subagent?: boolean
 }
 
 /** 进程资源占用样本 */
 export interface ResourceSample {
   /** 进程句柄 */
   handle: ProcessHandle
+  /** 资源归属(缺失表示未归因,由面板归入宿主/未归因组) */
+  owner?: ProcessOwner
   /** CPU 占用率(百分比) */
   cpuPercent: number
   /** 内存占用(字节) */

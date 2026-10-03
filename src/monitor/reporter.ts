@@ -22,6 +22,9 @@ function validateHandle(raw: unknown): string | null {
   if (item.parentPid !== undefined && (!Number.isInteger(item.parentPid) || (item.parentPid as number) <= 0)) {
     return '父进程标识必须为正整数'
   }
+  if (item.sessionId !== undefined && (typeof item.sessionId !== 'string' || item.sessionId.length === 0)) {
+    return '会话标识必须为非空字符串'
+  }
   return null
 }
 
@@ -41,6 +44,7 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
             pid: { type: 'number', required: true, description: '进程标识' },
             name: { type: 'string', description: '进程可读名称' },
             parentPid: { type: 'number', description: '父进程标识' },
+            sessionId: { type: 'string', description: '所属会话标识(用于面板按对话分组)' },
           },
           additionalProperties: false,
         },

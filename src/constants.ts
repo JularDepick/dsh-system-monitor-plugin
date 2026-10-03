@@ -107,6 +107,22 @@ export const PANEL_SERIES_COLORS = [
 /** 资源占比堆叠条高度(像素) */
 export const PANEL_SHARE_BAR_HEIGHT = 14
 
+/**
+ * 堆叠条右端固定空闲段占比(0–1)。
+ * dsh 自身占用通常很低,若空闲段按真实余量绘制,已用各段会被压得难以比较;
+ * 故空闲段固定占整条的这一比例(右端),其余宽度由已用项按相对占比铺满。
+ */
+export const PANEL_SHARE_IDLE_RATIO = 0.2
+
+/** 堆叠条段标签的字宽估算(像素,12px 等宽数字下约 7px/字符) */
+export const PANEL_SHARE_LABEL_CHAR_WIDTH = 7
+
+/** 堆叠条段标签的左右留白(像素,段宽需容下「文字宽 + 该留白」才显示标签) */
+export const PANEL_SHARE_LABEL_PADDING = 4
+
+/** 堆叠条宽度测量不可用时的回退值(像素,本地渲染/首帧测量前使用) */
+export const PANEL_SHARE_BAR_FALLBACK_WIDTH = 600
+
 /** 资源占比行左侧指标名宽度(像素,两行对齐) */
 export const PANEL_CHART_LABEL_WIDTH = 44
 
@@ -130,3 +146,6 @@ export const PANEL_TABLE_CPU_WIDTH = 76
 
 /** 进程表内存列宽(像素,容纳「999.99GB · 100.00%」于基准字号) */
 export const PANEL_TABLE_MEMORY_WIDTH = 168
+
+/** 对话表进程数列宽(像素) */
+export const PANEL_TABLE_SESSION_COUNT_WIDTH = 64
