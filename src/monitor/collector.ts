@@ -14,12 +14,11 @@ import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { cpus, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS, HISTORY_CAPACITY } from '../constants'
+import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
 
 import { readCgroupLimits } from './cgroup'
 import { resolveClkTck } from './clock-ticks'
-import { SampleHistory } from './history'
 
 /** 系统进程查询器接口(便于注入假实现测试) */
 export interface ProcessQuery {
@@ -478,8 +477,6 @@ export class ProcessCollector {
   private snapshot: MonitorSnapshot | null = null
   /** 最近一次查询失败原因(诊断用) */
   private lastError: string | null = null
-  /** 短期趋势留存(固定容量,仅在内存中,随插件卸载消失) */
-  private readonly history = new SampleHistory(HISTORY_CAPACITY)
 
   /** 构造采集器 */
   constructor(
@@ -611,13 +608,6 @@ export class ProcessCollector {
     const dshMemoryBytes = processes.reduce((sum, sample) => sum + sample.memoryBytes, 0)
     const othersMemoryPercent = memoryPercentOf(othersMemoryBytes)
     this.lastSampledAt = now
-    // 留存一点短期趋势:与快照合计同源(整机口径),容量固定,超出即丢最旧点
-    this.history.push({
-      sampledAt: now,
-      dshCpuPercent,
-      othersCpuPercent,
-      dshMemoryPercent: memoryPercentOf(dshMemoryBytes),
-    })
 
     // 读到但无权读取的进程既不计入 dsh 集合,也不会计入「其他应用」,会使「空闲」偏高,
     // 故与查询链降级一并标注,由面板显示为采集降级
@@ -634,7 +624,6 @@ export class ProcessCollector {
       degraded: this.query.degraded || unreadableCount > 0,
       unreadableCount,
       processes,
-      history: this.history.list(),
       totals: {
         othersCpuPercent,
         othersMemoryBytes,

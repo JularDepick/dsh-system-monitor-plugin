@@ -74,7 +74,6 @@ import {
   PANEL_STATE_WARN_COLOR,
   PANEL_STATE_WARN_SURFACE_COLOR,
   PANEL_STORAGE_KEY,
-  PANEL_SURFACE_COLOR,
   PANEL_SWATCH_SIZE,
   PANEL_TAB_ID,
   PANEL_TAB_ORDER,
@@ -92,8 +91,6 @@ import {
   PANEL_TABLE_SESSION_COUNT_WIDTH,
   PANEL_TABLE_SESSION_WIDTH,
   PANEL_TEXT_CJK_WIDTH,
-  PANEL_HISTORY_DASH,
-  PANEL_HISTORY_HEIGHT,
   PANEL_TOP_PADDING,
   PANEL_TYPOGRAPHY,
   PLUGIN_NAME,
@@ -103,7 +100,6 @@ import { panelDictionaries } from './i18n'
 import type { PanelTextKey } from './i18n'
 import { cpuDisplayFactor, normalizeCpuScope, scaleCpuPercent } from '../monitor/cpu-scope'
 import { formatPercent } from '../monitor/format'
-import { historyPolyline, historySummary } from '../monitor/history'
 import { normalizeTableSort, sortRows } from '../monitor/table-sort'
 import { layoutColumnWidths } from '../monitor/table-layout'
 import type { TableSort } from '../monitor/table-sort'
@@ -1551,13 +1547,6 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     totalMemoryBytes: snapshot.memoryLimitBytes ?? snapshot.totalMemoryBytes,
   }
   /**
-   * 短期趋势留存(占位快照或旧版载荷缺失该字段时按空数组处理)。
-   * 折线只画 dsh 侧 CPU 合计(整机口径,面板按当前口径倍率换算后展示),
-   * 摘要给出窗口均值与峰值,便于在窄条上读出趋势而不必逐点读图。
-   */
-  const historyPoints = snapshot.history ?? []
-  const historyStats = historySummary(historyPoints)
-  /**
    * 把当前快照整理为纯文本(用户显式触发的导出内容)。
    * 导出只在本机剪贴板落地,不经任何 dsh 通道,也不写回采集器;口径与面板展示一致。
    */
@@ -1571,12 +1560,6 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       ...(quotaParts.length === 0 ? [] : [`${t('summary.quota')}: ${quotaParts.join(' / ')}`]),
       `${t('chart.others')}: ${formatPercent(machine.othersCpu)} / ${formatPercent(machine.othersMemory)}`,
       `${t('chart.idle')}: ${formatPercent(machine.idleCpu)} / ${formatPercent(machine.idleMemory)}`,
-      ...(historyStats === null
-        ? []
-        : [`${t('history.title', { count: historyPoints.length })}: ${t('history.summary', {
-            avg: formatPercent(historyStats.dshCpuAvg * cpuFactor),
-            peak: formatPercent(historyStats.dshCpuPeak * cpuFactor),
-          })}`]),
     ]
     const appendCard = (
       title: string,
@@ -1854,63 +1837,6 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           </span>
         ))}
       </div>
-      {/*
-        短期趋势:最近若干轮采样的 dsh 侧 CPU 合计(整机口径),含高占用阈值参考线。
-        展示形式待定(见 前驱版本待办排期清单),故当前只保留折线,不显示标题与均值/峰值文本;
-        数值仍可由悬停提示与快照导出读到。无留存点时整块不渲染,避免留一个无说明的空框。
-      */}
-      {historyPoints.length === 0 ? null : (
-        <div
-          role="img"
-          aria-label={t('aria.history')}
-          title={historyStats === null ? t('history.empty') : t('history.summary', {
-            avg: formatPercent(historyStats.dshCpuAvg * cpuFactor),
-            peak: formatPercent(historyStats.dshCpuPeak * cpuFactor),
-          })}
-          style={{
-            height: PANEL_HISTORY_HEIGHT,
-            border: `${PANEL_SHARE_BAR_BORDER_WIDTH}px solid ${PANEL_SHARE_BAR_BORDER_COLOR}`,
-            borderRadius: 4,
-            background: PANEL_SURFACE_COLOR,
-            boxSizing: 'border-box',
-            overflow: 'hidden',
-          }}
-        >
-          {
-            // viewBox 与容器尺寸解耦:折线按百分比坐标绘制,容器宽度变化时自动伸缩;
-            // 非等比缩放会拉伸线宽,故用 non-scaling-stroke 固定为 1px
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%" aria-hidden="true">
-              <line
-                x1="0"
-                y1={100 - PANEL_HIGH_LOAD_THRESHOLD}
-                x2="100"
-                y2={100 - PANEL_HIGH_LOAD_THRESHOLD}
-                stroke={PANEL_BORDER_COLOR}
-                strokeWidth="1"
-                strokeDasharray={`${PANEL_HISTORY_DASH} ${PANEL_HISTORY_DASH}`}
-                vectorEffect="non-scaling-stroke"
-              />
-              {historyPoints.length === 1 ? (
-                <circle
-                  cx="100"
-                  cy={100 - Math.min(100, Math.max(0, historyPoints[0].dshCpuPercent))}
-                  r="1.5"
-                  fill={PANEL_ACCENT_COLOR}
-                  vectorEffect="non-scaling-stroke"
-                />
-              ) : (
-                <polyline
-                  points={historyPolyline(historyPoints, 100, 100)}
-                  fill="none"
-                  stroke={PANEL_ACCENT_COLOR}
-                  strokeWidth="1"
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
-            </svg>
-          }
-        </div>
-      )}
       {/* 配置子页展开时替换维度卡;关闭时还原为响应式栅格 */}
       {configOpen ? configCard : null}
       <div

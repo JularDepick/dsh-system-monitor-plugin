@@ -7,7 +7,6 @@
  */
 
 import type { CpuScope, PanelColumns } from '../constants'
-import type { HistoryPoint } from './history'
 
 /** 进程句柄,用于标识一个可被监控的进程 */
 export interface ProcessHandle {
@@ -135,11 +134,6 @@ export interface MonitorSnapshot {
   processes: ResourceSample[]
   /** 整机口径合计(其他应用与空闲),占整机百分比 */
   totals: MachineTotals
-  /**
-   * 短期趋势留存(按时间升序,最多 `HISTORY_CAPACITY` 点;固定容量环形语义,不落盘)。
-   * 面板据此画短期趋势线;占位快照携带空数组。
-   */
-  history: HistoryPoint[]
   /** 面板展示选项(泳道内名称开关等;缺失时客户端按默认值处理) */
   panelOptions?: PanelOptions
   /**

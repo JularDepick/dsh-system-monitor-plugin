@@ -145,18 +145,6 @@ export const PANEL_MAX_WIDTH = 1440
 export const PANEL_CARDS_DOUBLE_MIN_WIDTH = 720
 
 /**
- * 短期趋势留存容量(采样点条数):按默认轮询间隔约折合两分钟;
- * 容量固定,超出即丢最旧点,留存只在内存中且随插件卸载消失。
- */
-export const HISTORY_CAPACITY = 120
-
-/** 短期趋势线高度(像素):窄条,只作趋势判读,不取代卡片内的占比条 */
-export const PANEL_HISTORY_HEIGHT = 40
-
-/** 短期趋势线上「高占用阈值」参考线的虚线间距(像素) */
-export const PANEL_HISTORY_DASH = 4
-
-/**
  * 明细表可隐藏的可选列(名称列与 CPU 列恒显示:它们是识别行与判读占用的最小信息面)。
  * 取值同时用作本地偏好里的列标识,新增可选列时在此追加。
  */
@@ -223,8 +211,6 @@ export const PANEL_TYPOGRAPHY = {
  *   彩 —— 强调色取宿主的信息 / 业务主色;分段色取宿主静态色序列;状态色取宿主状态档位。
  */
 
-/** 面板页底与内嵌框底(趋势框、占比条内侧空隙) */
-export const PANEL_SURFACE_COLOR = 'var(--dsw-alias-bg-base, #fff)'
 
 /** 卡片面(统计卡与四张维度卡共用:浅色主题为浅灰面,深色主题为抬升面) */
 export const PANEL_CARD_COLOR = 'var(--dsw-alias-bg-module-platform, #f5f6f7)'
