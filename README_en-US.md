@@ -37,7 +37,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin-0.1.2.tgz
 
 ## Usage
 
-After installation and startup, the plugin provides a "System Monitor" tab in the session-area tab bar of the Web UI, showing CPU usage and memory usage (auto-scaled KB/MB/GB and percentage) of monitored processes, with the resource share drawn as a single stacked bar segmented per process. Process handles that need to be monitored are reported by the Agent through the reporting tool during a session.
+After installation and startup, the plugin provides a "System Monitor" tab in the session-area tab bar of the Web UI, showing CPU usage and memory usage (auto-scaled KB/MB/GB and percentage) of monitored processes across two dimensions (per process and per conversation). Resource share is drawn as three fixed lanes — other apps, DSH and its subprocesses (segmented per member), and idle — each labelled with its percentage of the whole machine, with the process/session name shown inside a segment whenever it fits (this can be turned off on the settings page through the plugin's configuration). Process handles that need to be monitored are reported by the Agent through the reporting tool during a session.
 
 The format specification of the process reporting mechanism is documented in [Process Reporting Mechanism and Specification](docs/v0.1.0-进程汇报机制与规范.md) (Chinese).
 

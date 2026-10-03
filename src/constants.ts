@@ -21,6 +21,9 @@ export const TRANSLATION_DIR = 'src/translation'
 /** 资源采集轮询间隔默认值(毫秒) */
 export const DEFAULT_POLL_INTERVAL = 1000
 
+/** 泳道内名称显示开关的默认值(开启;由插件配置投影到面板载荷) */
+export const DEFAULT_LANE_NAMES = true
+
 /** Agent 汇报进程句柄的工具名称 */
 export const REPORT_TOOL_NAME = 'system_monitor_report'
 
@@ -35,6 +38,13 @@ export const MONITOR_DATA_PATH = '/api/system-monitor/snapshot'
 
 /** 客户端 tab 轮询间隔(毫秒,与采集轮询默认值一致) */
 export const CLIENT_POLL_INTERVAL = 1000
+
+/**
+ * 数据端点在采集器尚未产出首份快照时的最长等待(毫秒):
+ * 等首轮采集计算完成后再回答,浏览器端因此不会先拿到占位快照、把面板置空;
+ * 等待超时后仍按占位快照回答,由面板按「无有效采样」处理并继续轮询。
+ */
+export const PANEL_FIRST_SAMPLE_WAIT_MS = QUERY_TIMEOUT_MS + 2000
 
 /** 会话区域 tab 标识(conversation.view 槽注册 id) */
 export const PANEL_TAB_ID = 'system-monitor'
@@ -107,12 +117,42 @@ export const PANEL_SERIES_COLORS = [
 /** 资源占比堆叠条高度(像素) */
 export const PANEL_SHARE_BAR_HEIGHT = 14
 
+/** 资源占比堆叠条高度(像素,泳道内显示名称时;需容纳说明字号的名称条) */
+export const PANEL_SHARE_BAR_HEIGHT_NAMED = 22
+
+/** 泳道内名称条的留白(像素:文字两侧 + 与段边的内缩,用于判断名称是否放得下) */
+export const PANEL_SHARE_NAME_PADDING = 12
+
 /**
- * 堆叠条右端固定空闲段占比(0–1)。
- * dsh 自身占用通常很低,若空闲段按真实余量绘制,已用各段会被压得难以比较;
- * 故空闲段固定占整条的这一比例(右端),其余宽度由已用项按相对占比铺满。
+ * 占比条三泳道宽度比例:左端「其他应用」、中段「dsh 及其子进程」、右端「空闲」。
+ * 三段都是固定 UI 长度(不随真实占用变化),占用数值由各段标签给出,
+ * 因此低占用时中段仍能清楚比较各进程/对话;中段按 dsh 成员相对占比分段。
  */
+export const PANEL_SHARE_OTHERS_RATIO = 0.2
+
+/** 占比条中段(dsh 及其子进程)宽度比例 */
+export const PANEL_SHARE_DSH_RATIO = 0.6
+
+/**
+ * 中段单个成员的最大宽度比例(1/3):
+ * 中段成员多于一个时,最大成员的 UI 宽度不得超过中段的这一比例,
+ * 其余宽度由其余成员按各自占整机数值的比例分取;只有一个成员时才允许它独占中段。
+ * 判定与分配都按该维度全部成员进行,CPU 与内存两行口径一致。
+ */
+export const PANEL_SHARE_MAX_SINGLE_RATIO = 1 / 3
+
+/**
+ * 中段每个成员的保底宽度比例(0.04):
+ * 先给每个成员留一份保底宽度,剩余宽度再按数值比例分配,使零占用成员也有可见占位、
+ * 中段任何情况下都被铺满;成员很多时保底会自动收窄,不超过「非最大者份额 ÷ 成员数」。
+ */
+export const PANEL_SHARE_MEMBER_MIN_RATIO = 0.04
+
+/** 占比条右端(空闲)宽度比例 */
 export const PANEL_SHARE_IDLE_RATIO = 0.2
+
+/** 「其他应用」泳道配色(静态中性色,与 dsh 分段系列色区分) */
+export const PANEL_OTHERS_COLOR = 'var(--dsw-static-neutral-400)'
 
 /** 堆叠条段标签的字宽估算(像素,12px 等宽数字下约 7px/字符) */
 export const PANEL_SHARE_LABEL_CHAR_WIDTH = 7
@@ -125,9 +165,6 @@ export const PANEL_SHARE_BAR_FALLBACK_WIDTH = 600
 
 /** 资源占比行左侧指标名宽度(像素,两行对齐) */
 export const PANEL_CHART_LABEL_WIDTH = 44
-
-/** 资源占比行右侧合计数值槽宽度(像素,右对齐,容纳 100.00%) */
-export const PANEL_TOTAL_VALUE_WIDTH = 64
 
 /** 进程名前的配色标识块边长(像素) */
 export const PANEL_SWATCH_SIZE = 10

@@ -217,6 +217,12 @@ export class ProcessCollector {
   private readonly lastCpu = new Map<number, number>()
   /** 最近一次采样时刻(epoch 毫秒) */
   private lastSampledAt = 0
+  /** 首份快照就绪的兑现器(产出首份快照时置空) */
+  private firstSampleResolve: (() => void) | null = null
+  /** 首份快照就绪信号:数据端点据此等待,避免先返回占位快照 */
+  private readonly firstSample = new Promise<void>((resolve) => {
+    this.firstSampleResolve = resolve
+  })
   /** 最近一次快照(查询失败时保留旧值) */
   private snapshot: MonitorSnapshot | null = null
   /** 最近一次查询失败原因(诊断用) */
@@ -281,10 +287,27 @@ export class ProcessCollector {
       .sort((a, b) => a - b)
     order.push(...extraReported)
 
-    // CPU 差分与内存换算;归属解析按本轮采样集合进行(进程树 + 汇报句柄)
-    const owners = this.resolveOwners(order)
+    // CPU 差分:全量进程都算(中段样本用 dsh 集合,左端「其他应用」用其余进程合计)
     const now = Date.now()
     const elapsed = this.lastSampledAt === 0 ? 0 : (now - this.lastSampledAt) / 1000
+    const cpuPercentByPid = new Map<number, number>()
+    for (const record of records) {
+      const previous = this.lastCpu.get(record.pid)
+      const cpuPercent = previous !== undefined && elapsed > 0 && record.cpuSeconds >= previous
+        ? ((record.cpuSeconds - previous) / elapsed / this.cpuCount) * 100
+        : 0
+      cpuPercentByPid.set(record.pid, cpuPercent)
+      this.lastCpu.set(record.pid, record.cpuSeconds)
+    }
+    // 清理已退出进程的差分基准:避免长期运行后映射无限增长,同时规避 pid 复用带来的错误差分
+    for (const pid of [...this.lastCpu.keys()]) {
+      if (!byPid.has(pid)) this.lastCpu.delete(pid)
+    }
+
+    // 归属解析按本轮采样集合进行(进程树 + 汇报句柄)
+    const owners = this.resolveOwners(order)
+    const memoryPercentOf = (bytes: number): number =>
+      this.totalMemoryBytes > 0 ? (bytes / this.totalMemoryBytes) * 100 : 0
     const processes: ResourceSample[] = order.map((pid) => {
       const record = byPid.get(pid)!
       const reportedHandle = this.reported.get(pid)
@@ -295,21 +318,30 @@ export class ProcessCollector {
           ? {}
           : { parentPid: reportedHandle?.parentPid ?? record.parentPid! },
       }
-      const previous = this.lastCpu.get(pid)
-      let cpuPercent = 0
-      if (previous !== undefined && elapsed > 0 && record.cpuSeconds >= previous) {
-        cpuPercent = ((record.cpuSeconds - previous) / elapsed / this.cpuCount) * 100
-      }
-      this.lastCpu.set(pid, record.cpuSeconds)
       const owner = owners.get(pid)
       return {
         handle,
         ...(owner === undefined ? {} : { owner }),
-        cpuPercent,
+        cpuPercent: cpuPercentByPid.get(pid) ?? 0,
         memoryBytes: record.workingSetBytes,
-        memoryPercent: this.totalMemoryBytes > 0 ? (record.workingSetBytes / this.totalMemoryBytes) * 100 : 0,
+        memoryPercent: memoryPercentOf(record.workingSetBytes),
       }
     })
+
+    // 整机口径:左端「其他应用」为 dsh 集合外全部进程合计,右端「空闲」为整机未被占用部分
+    const sampled = new Set(order)
+    let othersCpuPercent = 0
+    let othersMemoryBytes = 0
+    let othersCount = 0
+    for (const record of records) {
+      if (sampled.has(record.pid)) continue
+      othersCpuPercent += cpuPercentByPid.get(record.pid) ?? 0
+      othersMemoryBytes += record.workingSetBytes
+      othersCount += 1
+    }
+    const dshCpuPercent = processes.reduce((sum, sample) => sum + sample.cpuPercent, 0)
+    const dshMemoryBytes = processes.reduce((sum, sample) => sum + sample.memoryBytes, 0)
+    const othersMemoryPercent = memoryPercentOf(othersMemoryBytes)
     this.lastSampledAt = now
 
     this.snapshot = {
@@ -321,6 +353,38 @@ export class ProcessCollector {
       platform: resolvePlatformLabel(),
       degraded: this.query.degraded,
       processes,
+      totals: {
+        othersCpuPercent,
+        othersMemoryBytes,
+        othersMemoryPercent,
+        othersCount,
+        idleCpuPercent: Math.max(0, 100 - othersCpuPercent - dshCpuPercent),
+        idleMemoryPercent: Math.max(0, 100 - othersMemoryPercent - memoryPercentOf(dshMemoryBytes)),
+      },
+    }
+    // 首份快照就绪:唤醒等待中的数据端点请求
+    this.firstSampleResolve?.()
+    this.firstSampleResolve = null
+    return this.snapshot
+  }
+
+  /**
+   * 等待首份快照就绪(至多 timeoutMs 毫秒)。
+   * 数据端点在采集器尚未产出时据此等待,等这一轮计算完成再回答,
+   * 避免浏览器端先拿到占位快照而把面板置空;超时返回 null。
+   */
+  async whenSampled(timeoutMs: number): Promise<MonitorSnapshot | null> {
+    if (this.snapshot !== null) return this.snapshot
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.firstSample,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
     }
     return this.snapshot
   }

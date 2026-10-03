@@ -3,10 +3,11 @@
  *
  * 经 conversation.view 槽注册浏览器端面板组件,
  * 通过 host webserver 数据端点同源轮询快照并展示。
- * 面板按两个维度各占一张卡:进程维度(dsh 进程树逐进程)与对话维度(按会话归并);
- * 两张卡的资源占比条形状一致——右端固定 20% 为空闲段,左端 80% 由已用项按相对占比铺满,
- * 每段正下方在放得下文字且占比不小于 1% 时显示整数百分比。
- * 基准字号取宿主排版 token,颜色只用宿主语义 token 与静态色 token,明暗主题自适应。
+ * 面板按两个维度各占一张卡:进程维度(dsh 进程树逐进程)与对话维度(按会话归并)。
+ * 两张卡的资源占比条形状一致,为三段固定泳道:
+ * 左端「其他应用」(与 dsh 无关的系统进程合计)、中段「dsh 及其子进程」(按成员相对占比分段)、
+ * 右端「空闲」(整机未被占用);三段宽度固定,占用数值由各段标签给出(占整机百分比,精确到 0.01%),
+ * 标签仅在所在段放得下时显示。基准字号取宿主排版 token,颜色只用宿主语义 token 与静态色 token,明暗主题自适应。
  * 作者:JularDepick
  */
 
@@ -21,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   CLIENT_POLL_INTERVAL,
+  DEFAULT_LANE_NAMES,
   MONITOR_DATA_PATH,
   PANEL_AUTHOR,
   PANEL_AUTHOR_URL,
@@ -30,13 +32,20 @@ import {
   PANEL_COLUMN_GUTTER,
   PANEL_HIGH_LOAD_THRESHOLD,
   PANEL_LOCALE_NAMESPACE,
+  PANEL_OTHERS_COLOR,
   PANEL_PROJECT_URL,
   PANEL_SERIES_COLORS,
   PANEL_SHARE_BAR_FALLBACK_WIDTH,
   PANEL_SHARE_BAR_HEIGHT,
+  PANEL_SHARE_BAR_HEIGHT_NAMED,
+  PANEL_SHARE_DSH_RATIO,
   PANEL_SHARE_IDLE_RATIO,
   PANEL_SHARE_LABEL_CHAR_WIDTH,
   PANEL_SHARE_LABEL_PADDING,
+  PANEL_SHARE_MAX_SINGLE_RATIO,
+  PANEL_SHARE_MEMBER_MIN_RATIO,
+  PANEL_SHARE_NAME_PADDING,
+  PANEL_SHARE_OTHERS_RATIO,
   PANEL_STACK_GAP,
   PANEL_SWATCH_SIZE,
   PANEL_TAB_ID,
@@ -46,7 +55,6 @@ import {
   PANEL_TABLE_PARENT_WIDTH,
   PANEL_TABLE_PID_WIDTH,
   PANEL_TABLE_SESSION_COUNT_WIDTH,
-  PANEL_TOTAL_VALUE_WIDTH,
   PANEL_TOP_PADDING,
   PANEL_TYPOGRAPHY,
   PLUGIN_NAME,
@@ -60,7 +68,7 @@ type PanelTranslate = TranslateNS<typeof PANEL_LOCALE_NAMESPACE>
 /** 面板组件 props:会话视图运行时座位 + locale 座位 */
 type MonitorTabProps = PropsRuntime<'conversation.view'> & { t: PanelTranslate }
 
-/** 分组表与堆叠条的一项(进程维度为单个进程,对话维度为一个会话/宿主/未归因) */
+/** 分组表与占比条的一项(进程维度为单个进程,对话维度为一个会话/宿主/未归因) */
 interface ShareGroup {
   /** 分组键(进程维度为 pid,对话维度为会话标识或保留键) */
   key: string
@@ -76,6 +84,18 @@ interface ShareGroup {
   memoryBytes: number
   /** 成员进程数 */
   count: number
+}
+
+/** 占比条两端泳道所需的整机口径数值(均为占整机百分比) */
+interface MachineShare {
+  /** 左端:与 dsh 无关的系统进程 CPU 合计 */
+  othersCpu: number
+  /** 右端:整机未被占用的 CPU */
+  idleCpu: number
+  /** 左端:与 dsh 无关的系统进程内存合计 */
+  othersMemory: number
+  /** 右端:整机未被占用的内存 */
+  idleMemory: number
 }
 
 /** 归入「宿主」组的保留键(宿主进程承载全部会话,不能归给某一个会话) */
@@ -116,9 +136,48 @@ function seriesColor(index: number): string {
   return PANEL_SERIES_COLORS[index % PANEL_SERIES_COLORS.length]
 }
 
+/** 占比条段标签是否放得下:按字宽估算,文字宽加留白不超过所在段/格宽度 */
+function labelFits(text: string, cellWidth: number, padding: number = PANEL_SHARE_LABEL_PADDING): boolean {
+  return text.length > 0 && cellWidth >= text.length * PANEL_SHARE_LABEL_CHAR_WIDTH + padding
+}
+
 /** 进程显示名(缺失时退化为 pid) */
 function displayName(sample: ResourceSample): string {
   return sample.handle.name ?? String(sample.handle.pid)
+}
+
+/**
+ * 中段各成员的显示宽度权重(合计为 1)。
+ * 判定与分配都按该维度全部成员进行,使 CPU 与内存两行口径一致:
+ * 只有一个成员时允许它独占中段;多个成员时每个成员先取保底宽度,
+ * 最大成员封顶到 `PANEL_SHARE_MAX_SINGLE_RATIO`,其余宽度按数值比例分取
+ * (其余成员数值合计为 0 时等分),任何情况下中段都被铺满、零占用成员也有可见占位。
+ */
+function computeLaneWeights(values: readonly number[]): number[] {
+  const count = values.length
+  if (count === 0) return []
+  // 只有一个成员:独占中段
+  if (count === 1) return [1]
+  const total = values.reduce((sum, value) => sum + value, 0)
+  // 全部为零:等分占位(成员仍可见,数值由表格给出)
+  if (total <= 0) return values.map(() => 1 / count)
+  // 成员很多时保底自动收窄,保证「非最大者」的份额够分
+  const floor = Math.min(PANEL_SHARE_MEMBER_MIN_RATIO, (1 - PANEL_SHARE_MAX_SINGLE_RATIO) / count)
+  const largest = values.indexOf(Math.max(...values))
+  if (values[largest] / total <= PANEL_SHARE_MAX_SINGLE_RATIO) {
+    // 最大成员未超上限:全体按「保底 + 数值比例」铺满中段
+    const pool = 1 - count * floor
+    return values.map((value) => floor + pool * (value / total))
+  }
+  // 最大成员封顶:其余成员先取保底,剩余宽度按其数值比例分取(合计为 0 时等分)
+  const restCount = count - 1
+  const restTotal = total - values[largest]
+  const restPool = 1 - PANEL_SHARE_MAX_SINGLE_RATIO - restCount * floor
+  return values.map((value, index) => {
+    if (index === largest) return PANEL_SHARE_MAX_SINGLE_RATIO
+    if (restTotal > 0) return floor + restPool * (value / restTotal)
+    return floor + restPool / restCount
+  })
 }
 
 /** 进程维度分组:每个进程一组,保持采集顺序(进程树在前) */
@@ -225,13 +284,24 @@ const cardStyle: CSSProperties = {
   overflow: 'hidden',
 }
 
-/** 卡片头部:维度标题 + 右侧计数 */
+/** 卡片头部:维度标题 + 右侧计数与合计 */
 const cardHeadStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
+  gap: 8,
   padding: '6px 10px',
   borderBottom: '1px solid var(--dsw-alias-border-l1)',
+}
+
+/** 卡片头部右侧元信息(计数与合计) */
+const cardMetaStyle: CSSProperties = {
+  color: 'var(--dsw-alias-label-caption)',
+  fontVariantNumeric: 'tabular-nums',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  ...PANEL_TYPOGRAPHY.caption,
 }
 
 /** 表格数据单元格(守则:表格默认水平居中;显式盒模型防宿主继承) */
@@ -253,6 +323,43 @@ const headCellStyle: CSSProperties = {
 
 /** 数据单元格 */
 const dataCellStyle: CSSProperties = { ...cellStyle, color: 'var(--dsw-alias-label-primary)' }
+
+/** 占比条段标签单元格(居中、等宽数字、放不下时整格留空) */
+const shareLabelStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  whiteSpace: 'nowrap',
+  textAlign: 'center',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontVariantNumeric: 'tabular-nums',
+  ...PANEL_TYPOGRAPHY.caption,
+}
+
+/** 泳道单元格:名称在其中居中,超出即裁切 */
+const laneCellStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: 0,
+  overflow: 'hidden',
+}
+
+/**
+ * 泳道内名称条。
+ * 分段底色是彩色(明暗主题下取值不同),故名称不直接压在底色上,
+ * 而用宿主浮层底色 + 主要文字色的小色块承载,保证任意分段色下都可读。
+ */
+const nameChipStyle: CSSProperties = {
+  maxWidth: '100%',
+  padding: '0 4px',
+  borderRadius: 3,
+  background: 'var(--dsw-alias-bg-overlay)',
+  color: 'var(--dsw-alias-label-primary)',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  ...PANEL_TYPOGRAPHY.caption,
+}
 
 /** 名称前配色标识块(与占比条分段同色,充当图例) */
 function Swatch(props: { index: number }): ReactNode {
@@ -296,129 +403,182 @@ function StatusBadge(props: { tone: 'ok' | 'warn' | 'error'; label: string }): R
 }
 
 /**
- * 资源占比条(单行):
- * 右端固定 `PANEL_SHARE_IDLE_RATIO` 宽度为空闲段(轨道底色,不随真实空闲量变化),
- * 左端其余宽度由已用项按相对占比铺满;段标签在段宽容得下文字且取整占比不小于 1% 时显示。
+ * 资源占比条(单行):三段固定宽度泳道。
+ * 左端「其他应用」为与 dsh 无关的系统进程合计,中段为 dsh 及其子进程(按成员相对占比分段),
+ * 右端「空闲」为整机未被占用部分;三段宽度都不随真实占用变化,占用数值由段标签给出。
+ * 开启「泳道内名称」时,各段内部居中显示对应名称(进程名/对话名;两端显示泳道名),
+ * 放不下则留空并只保留悬停提示。
  */
-function ShareBar(props: {
+function ShareTrack(props: {
   groups: readonly ShareGroup[]
   pick: (group: ShareGroup) => number
-  total: number
+  others: number
+  idle: number
   width: number
   label: string
-  idleLabel: string
+  names: boolean
+  t: PanelTranslate
 }): ReactNode {
-  // 合计超过 100%(多核噪声或汇报句柄越界)时按比例缩放,保证不溢出轨道
-  const scale = props.total > 100 ? 100 / props.total : 1
-  const usedRatio = 1 - PANEL_SHARE_IDLE_RATIO
-  const usedWidth = `${usedRatio * 100}%`
+  const values = props.groups.map((group) => props.pick(group))
+  const weights = computeLaneWeights(values)
+  const dshTotal = values.reduce((sum, value) => sum + value, 0)
+  const othersText = formatPercent(props.others)
+  const idleText = formatPercent(props.idle)
+  const othersName = props.t('chart.others')
+  const idleName = props.t('chart.idle')
+  const laneWidth = (ratio: number): number => props.width * ratio
+  const othersFlex = `0 0 ${PANEL_SHARE_OTHERS_RATIO * 100}%`
+  const dshFlex = `0 0 ${PANEL_SHARE_DSH_RATIO * 100}%`
+  const idleFlex = `0 0 ${PANEL_SHARE_IDLE_RATIO * 100}%`
+  const named = (text: string, cellWidth: number): ReactNode =>
+    props.names && labelFits(text, cellWidth, PANEL_SHARE_NAME_PADDING)
+      ? <span style={nameChipStyle}>{text}</span>
+      : null
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
       <div
         role="img"
-        aria-label={`${props.label} ${formatPercent(props.total)}`}
+        aria-label={
+          `${props.label}:${othersName} ${othersText},` +
+          `${props.t('chart.dsh')} ${formatPercent(dshTotal)},${idleName} ${idleText}`
+        }
         style={{
           display: 'flex',
-          height: PANEL_SHARE_BAR_HEIGHT,
+          height: props.names ? PANEL_SHARE_BAR_HEIGHT_NAMED : PANEL_SHARE_BAR_HEIGHT,
           borderRadius: 999,
           background: 'var(--dsw-alias-interactive-bg-hover)',
           overflow: 'hidden',
         }}
       >
-        <div style={{ display: 'flex', flex: `0 0 ${usedWidth}`, minWidth: 0 }}>
-          {props.groups.map((group, index) => {
-            const value = props.pick(group)
-            if (value <= 0) return null
-            return (
-              <div
-                key={group.key}
-                title={`${group.label} ${formatPercent(value)}`}
-                style={{ flexGrow: value * scale, flexBasis: 0, background: seriesColor(index) }}
-              />
-            )
-          })}
+        {/* 左端泳道:与 dsh 无关的系统进程合计 */}
+        <div title={`${othersName} ${othersText}`} style={{ flex: othersFlex, background: PANEL_OTHERS_COLOR, ...laneCellStyle }}>
+          {named(othersName, laneWidth(PANEL_SHARE_OTHERS_RATIO))}
         </div>
-        <div title={props.idleLabel} style={{ flex: '1 1 auto' }} />
-      </div>
-      {/* 段标签行:与已用区同构,高度固定以免标签全部隐藏时行高跳动 */}
-      <div style={{ display: 'flex', width: '100%', height: 18 }}>
-        <div style={{ display: 'flex', flex: `0 0 ${usedWidth}`, minWidth: 0 }}>
-          {props.groups.map((group) => {
-            const value = props.pick(group)
-            const share = props.total > 0 ? (value / props.total) * 100 : 0
-            const rounded = Math.round(share)
-            const text = rounded >= 1 ? `${rounded}%` : ''
-            const segmentWidth = usedRatio * props.width * (props.total > 0 ? value / props.total : 0)
-            const fits = text.length > 0 &&
-              segmentWidth >= text.length * PANEL_SHARE_LABEL_CHAR_WIDTH + PANEL_SHARE_LABEL_PADDING
+        {/* 中段泳道:dsh 及其子进程,按成员显示权重分段(最大者封顶 1/3,零占用成员保底占位) */}
+        <div style={{ display: 'flex', flex: dshFlex, minWidth: 0 }}>
+          {props.groups.map((group, index) => {
+            if (weights[index] <= 0) return null
             return (
               <div
                 key={group.key}
-                style={{
-                  flexGrow: value * scale,
-                  flexBasis: 0,
-                  minWidth: 0,
-                  overflow: 'hidden',
-                  whiteSpace: 'nowrap',
-                  textAlign: 'center',
-                  color: 'var(--dsw-alias-label-tertiary)',
-                  fontVariantNumeric: 'tabular-nums',
-                  ...PANEL_TYPOGRAPHY.caption,
-                }}
+                title={`${group.label} ${formatPercent(values[index])}`}
+                style={{ flexGrow: weights[index], flexBasis: 0, background: seriesColor(index), ...laneCellStyle }}
               >
-                {fits ? text : ''}
+                {named(group.label, laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index])}
               </div>
             )
           })}
+        </div>
+        {/* 右端泳道:整机未被占用的资源(保持轨道底色) */}
+        <div title={`${idleName} ${idleText}`} style={{ flex: idleFlex, ...laneCellStyle }}>
+          {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO))}
+        </div>
+      </div>
+      {/* 段标签行:与三段同构,数值为占整机百分比,放不下则留空 */}
+      <div style={{ display: 'flex', width: '100%', height: 18 }}>
+        <div style={{ flex: othersFlex, ...shareLabelStyle }}>
+          {labelFits(othersText, laneWidth(PANEL_SHARE_OTHERS_RATIO)) ? othersText : ''}
+        </div>
+        <div style={{ display: 'flex', flex: dshFlex, minWidth: 0 }}>
+          {props.groups.map((group, index) => {
+            const value = values[index]
+            // 零占用成员不显示 0.00% 标签(信息由悬停提示给出),保持标签行干净
+            const text = value > 0 ? formatPercent(value) : ''
+            const segmentWidth = laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index]
+            return (
+              <div key={group.key} style={{ flexGrow: weights[index], flexBasis: 0, ...shareLabelStyle }}>
+                {labelFits(text, segmentWidth) ? text : ''}
+              </div>
+            )
+          })}
+        </div>
+        <div style={{ flex: idleFlex, ...shareLabelStyle }}>
+          {labelFits(idleText, laneWidth(PANEL_SHARE_IDLE_RATIO)) ? idleText : ''}
         </div>
       </div>
     </div>
   )
 }
 
-/** 一行资源占比:指标名 + 占比条 + 合计数值 */
+/** 一行资源占比:指标名 + 三段占比条 */
 function ShareRow(props: {
   label: string
   groups: readonly ShareGroup[]
   pick: (group: ShareGroup) => number
+  others: number
+  idle: number
   width: number
-  totalLabel: string
-  idleLabel: string
+  names: boolean
+  t: PanelTranslate
 }): ReactNode {
-  const total = props.groups.reduce((sum, group) => sum + props.pick(group), 0)
-  const high = total > PANEL_HIGH_LOAD_THRESHOLD
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
       <span style={{ width: PANEL_CHART_LABEL_WIDTH, flex: 'none', color: 'var(--dsw-alias-label-secondary)', ...PANEL_TYPOGRAPHY.caption }}>
         {props.label}
       </span>
-      <ShareBar groups={props.groups} pick={props.pick} total={total} width={props.width} label={props.label} idleLabel={props.idleLabel} />
-      <span
-        title={props.totalLabel}
-        style={{
-          width: PANEL_TOTAL_VALUE_WIDTH,
-          flex: 'none',
-          textAlign: 'right',
-          fontVariantNumeric: 'tabular-nums',
-          whiteSpace: 'nowrap',
-          color: high ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)',
-          ...PANEL_TYPOGRAPHY.caption,
-        }}
-      >
-        {formatPercent(total)}
-      </span>
+      <ShareTrack
+        groups={props.groups}
+        pick={props.pick}
+        others={props.others}
+        idle={props.idle}
+        width={props.width}
+        label={props.label}
+        names={props.names}
+        t={props.t}
+      />
+    </div>
+  )
+}
+
+/** 占比条图例:三段泳道的含义(中段用系列色渐变表示按成员分段) */
+function ShareLegend(props: { t: PanelTranslate }): ReactNode {
+  const items: { key: string; color: string; label: string }[] = [
+    { key: 'others', color: PANEL_OTHERS_COLOR, label: props.t('chart.others') },
+    {
+      key: 'dsh',
+      color: `linear-gradient(90deg, ${seriesColor(0)} 0 34%, ${seriesColor(1)} 34% 67%, ${seriesColor(2)} 67% 100%)`,
+      label: props.t('chart.dsh'),
+    },
+    { key: 'idle', color: 'var(--dsw-alias-interactive-bg-hover)', label: props.t('chart.idle') },
+  ]
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '2px 12px',
+        color: 'var(--dsw-alias-label-tertiary)',
+        ...PANEL_TYPOGRAPHY.caption,
+      }}
+    >
+      {items.map((item) => (
+        <span key={item.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              width: PANEL_SWATCH_SIZE,
+              height: PANEL_SWATCH_SIZE,
+              flex: 'none',
+              borderRadius: 3,
+              background: item.color,
+            }}
+          />
+          {item.label}
+        </span>
+      ))}
     </div>
   )
 }
 
 /**
- * 维度卡片:标题 + 计数 + CPU/内存两条占比条 + 该维度的明细表。
- * 条宽按卡片实测宽度推导(标签列与合计列之外的剩余宽度)。
+ * 维度卡片:标题 + 计数与合计 + 图例 + CPU/内存两条三段占比条 + 该维度的明细表。
+ * 条宽按卡片实测宽度推导(指标名列与间隙之外的剩余宽度)。
  */
 function DimensionCard(props: {
   title: string
   countText: string
   groups: readonly ShareGroup[]
+  machine: MachineShare
+  names: boolean
   t: PanelTranslate
   headCells: ReactNode
   colgroup: ReactNode
@@ -433,39 +593,50 @@ function DimensionCard(props: {
     const element = bodyRef.current
     if (element === null || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
-      const bodyWidth = element.clientWidth
-      // 行内三段:指标名列 + 条 + 合计列,两处 gap 各 10px
-      const next = bodyWidth - PANEL_CHART_LABEL_WIDTH - PANEL_TOTAL_VALUE_WIDTH - 20
+      // 行内两段:指标名列 + 占比条,一处 gap 10px
+      const next = element.clientWidth - PANEL_CHART_LABEL_WIDTH - 10
       if (next > 0) setWidth(next)
     })
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
 
+  const cpuTotal = props.groups.reduce((sum, group) => sum + group.cpuPercent, 0)
+  const memoryTotal = props.groups.reduce((sum, group) => sum + group.memoryPercent, 0)
+
   return (
     <div style={cardStyle}>
       <div style={cardHeadStyle}>
-        <span style={{ color: 'var(--dsw-alias-label-secondary)', ...PANEL_TYPOGRAPHY.baseStrong }}>{props.title}</span>
-        <span style={{ color: 'var(--dsw-alias-label-caption)', fontVariantNumeric: 'tabular-nums', ...PANEL_TYPOGRAPHY.caption }}>
+        <span style={{ color: 'var(--dsw-alias-label-secondary)', flex: 'none', ...PANEL_TYPOGRAPHY.baseStrong }}>{props.title}</span>
+        <span style={cardMetaStyle}>
           {props.countText}
+          {' · '}
+          {props.t('chart.headerTotal', { metric: props.t('table.column.cpu'), value: formatPercent(cpuTotal) })}
+          {' · '}
+          {props.t('chart.headerTotal', { metric: props.t('table.column.memory'), value: formatPercent(memoryTotal) })}
         </span>
       </div>
       <div ref={bodyRef} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px' }}>
+        <ShareLegend t={props.t} />
         <ShareRow
           label={props.t('table.column.cpu')}
           groups={props.groups}
           pick={(group) => group.cpuPercent}
+          others={props.machine.othersCpu}
+          idle={props.machine.idleCpu}
           width={width}
-          totalLabel={props.t('chart.total')}
-          idleLabel={props.t('chart.idle')}
+          names={props.names}
+          t={props.t}
         />
         <ShareRow
           label={props.t('table.column.memory')}
           groups={props.groups}
           pick={(group) => group.memoryPercent}
+          others={props.machine.othersMemory}
+          idle={props.machine.idleMemory}
           width={width}
-          totalLabel={props.t('chart.total')}
-          idleLabel={props.t('chart.idle')}
+          names={props.names}
+          t={props.t}
         />
       </div>
       {props.groups.length === 0 ? (
@@ -493,34 +664,47 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
 
   useEffect(() => {
     let alive = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    /**
+     * 单次轮询:只有「计算完成」的快照才更新界面。
+     * 占位响应(采集器尚未产出首份快照)与轮询失败一律不覆盖既有内容,
+     * 已渲染的面板因此不会因为一次空响应而被清空。
+     */
     const tick = async (): Promise<void> => {
       try {
         const response = await fetch(MONITOR_DATA_PATH, { cache: 'no-store' })
         if (!response.ok) throw new Error(String(response.status))
         const data = (await response.json()) as MonitorSnapshot
         if (!alive) return
-        setSnapshot(data)
-        setUnavailable(false)
+        if (data.sampledAt > 0) {
+          setSnapshot(data)
+          setUnavailable(false)
+        } else if (typeof data.error === 'string' && data.error.length > 0) {
+          // 采集失败:有旧快照时保留旧快照并标记不可用,无旧快照时显示不可用提示
+          setUnavailable(true)
+        }
+        // 无错但无采样的占位响应:仅表示首轮采集尚未完成,保持当前界面等待下一轮
       } catch {
         if (!alive) return
         setUnavailable(true)
+      } finally {
+        // 串行轮询:等本轮请求结束再排下一轮,避免请求堆叠
+        if (alive) timer = setTimeout(() => void tick(), CLIENT_POLL_INTERVAL)
       }
     }
     void tick()
-    const timer = setInterval(() => void tick(), CLIENT_POLL_INTERVAL)
     return () => {
       alive = false
-      clearInterval(timer)
+      if (timer !== undefined) clearTimeout(timer)
     }
   }, [])
 
   /**
-   * 面板可展示以"存在采样"为前提:采集器尚未产出首份快照时,
-   * 数据端点返回 200 + 占位快照(sampledAt 为 0,另带 error 说明)。
-   * 若把占位响应当有效数据渲染,面板会显示 1970 年采样时间与全 0 指标,
-   * 因此占位响应与轮询失败一律按数据源不可用处理。
+   * 状态只保存「计算完成」的快照(采样时刻大于 0),故 snapshot 非空即可展示。
+   * 占位响应不会写入状态:数据端点在首轮采集期间先等待计算完成,等待超时才返回占位快照,
+   * 此时界面要么保持加载态、要么继续显示既有内容,不会出现 1970 年采样时间与全 0 指标。
    */
-  const sampled = snapshot !== null && snapshot.sampledAt > 0
+  const sampled = snapshot !== null
 
   // 加载中:骨架屏占位
   if (snapshot === null && !unavailable) {
@@ -554,13 +738,23 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const sessionGroups = groupBySession(processes, snapshot.rootPid, t)
   /** 进程分组键 → 样本(进程维度分组与样本一一对应,按键取用避免下标耦合) */
   const sampleByPid = new Map(processes.map((sample) => [String(sample.handle.pid), sample]))
-  const summary: { key: 'summary.sampledAt' | 'summary.platform' | 'summary.pollInterval' | 'summary.cpuCount' | 'summary.totalMemory' | 'summary.rootPid'; value: string }[] = [
+  /** 占比条两端泳道的整机口径数值(两张卡一致,只有中段分组不同) */
+  const machine: MachineShare = {
+    othersCpu: snapshot.totals.othersCpuPercent,
+    idleCpu: snapshot.totals.idleCpuPercent,
+    othersMemory: snapshot.totals.othersMemoryPercent,
+    idleMemory: snapshot.totals.idleMemoryPercent,
+  }
+  /** 是否在泳道内显示名称(来自插件配置;配置缺失时用默认值) */
+  const laneNames = snapshot.panelOptions?.laneNames ?? DEFAULT_LANE_NAMES
+  const summary: { key: 'summary.sampledAt' | 'summary.platform' | 'summary.pollInterval' | 'summary.cpuCount' | 'summary.totalMemory' | 'summary.rootPid' | 'summary.others'; value: string }[] = [
     { key: 'summary.sampledAt', value: formatDateTime(snapshot.sampledAt) },
     { key: 'summary.platform', value: snapshot.platform || t('summary.platformUnknown') },
     { key: 'summary.pollInterval', value: `${snapshot.pollInterval}ms` },
     { key: 'summary.cpuCount', value: String(snapshot.cpuCount) },
     { key: 'summary.totalMemory', value: formatBytes(snapshot.totalMemoryBytes) },
     { key: 'summary.rootPid', value: String(snapshot.rootPid) },
+    { key: 'summary.others', value: String(snapshot.totals.othersCount) },
   ]
 
   /** 单元格中的数值(高占用时按语义色高亮) */
@@ -612,6 +806,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         title={t('table.title')}
         countText={t('table.count', { count: processGroups.length })}
         groups={processGroups}
+        machine={machine}
+        names={laneNames}
         t={t}
         emptyText={t('empty.noProcesses')}
         ariaLabel={t('table.ariaLabel')}
@@ -660,6 +856,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           count: sessionGroups.filter((group) => group.key !== HOST_GROUP_KEY && group.key !== UNATTRIBUTED_GROUP_KEY).length,
         })}
         groups={sessionGroups}
+        machine={machine}
+        names={laneNames}
         t={t}
         emptyText={t('empty.noProcesses')}
         ariaLabel={t('session.title')}

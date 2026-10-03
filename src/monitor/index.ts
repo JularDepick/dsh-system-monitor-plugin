@@ -99,8 +99,9 @@ export function setup(ctx: Context, config: Config): void {
 
   registerReporter(ctx, collector)
 
-  // 面板数据路由:webServer 现成则直接挂载,晚出现时补挂
-  const panel = new MonitorPanel(collector)
+  // 面板数据路由:webServer 现成则直接挂载,晚出现时补挂;
+  // 展示选项由插件配置提供(设置页改动后经宿主重载插件生效,随下次轮询下发)
+  const panel = new MonitorPanel(collector, () => ({ laneNames: config.laneNames }))
   const mount = (): void => panel.attach(ctx)
   ctx.effect(() => {
     mount()

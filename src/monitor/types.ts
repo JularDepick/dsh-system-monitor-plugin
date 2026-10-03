@@ -66,6 +66,35 @@ export interface ProcessRecord {
   workingSetBytes: number
 }
 
+/**
+ * 整机资源合计(占比条左右两端用)。
+ * 「其他应用」为与 dsh 无关的系统进程合计,「空闲」为整机未被占用的部分;
+ * 所有百分比均相对整机资源(CPU 为占用率百分比,内存为占物理内存百分比)。
+ */
+export interface MachineTotals {
+  /** 与 dsh 无关的系统进程 CPU 合计(占整机百分比) */
+  othersCpuPercent: number
+  /** 与 dsh 无关的系统进程内存合计(字节) */
+  othersMemoryBytes: number
+  /** 与 dsh 无关的系统进程内存合计(占整机百分比) */
+  othersMemoryPercent: number
+  /** 与 dsh 无关的系统进程数 */
+  othersCount: number
+  /** 整机未被占用的 CPU(占整机百分比) */
+  idleCpuPercent: number
+  /** 整机未被占用的内存(占整机百分比) */
+  idleMemoryPercent: number
+}
+
+/**
+ * 面板展示选项(由插件配置投影给客户端,供面板按时下发展示)。
+ * 配置改动经宿主设置页写回插件配置后,随下一次轮询的载荷生效。
+ */
+export interface PanelOptions {
+  /** 是否在占比条泳道内显示进程/对话名称(关闭后仅保留悬停提示) */
+  laneNames: boolean
+}
+
 /** 面板展示快照 */
 export interface MonitorSnapshot {
   /** 采样时刻(epoch 毫秒) */
@@ -84,6 +113,10 @@ export interface MonitorSnapshot {
   degraded: boolean
   /** 被监控进程的资源样本(进程树在前,汇报句柄在后) */
   processes: ResourceSample[]
+  /** 整机口径合计(其他应用与空闲),占整机百分比 */
+  totals: MachineTotals
+  /** 面板展示选项(泳道内名称开关等;缺失时客户端按默认值处理) */
+  panelOptions?: PanelOptions
   /**
    * 无采样时的失败原因(仅数据端点在采集器尚未产出快照时携带)。
    * 携带该项即表示 `sampledAt` 为 0、其余指标均为占位值,面板不得当作有效数据展示。
