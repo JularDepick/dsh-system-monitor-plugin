@@ -3,7 +3,7 @@
  *
  * 按轮询间隔采集 dsh 进程树与 Agent 已汇报句柄的资源占用:
  * Windows 经 PowerShell 查询系统进程快照(CIM 为主,Get-Process 为降级),
- * Linux(含 WSL)经 /proc 文件系统读取,macOS 经 ps 读取;
+ * Linux(含 WSL)经 /proc 文件系统读取,macOS 与其余类 Unix 平台经 ps 读取;
  * CPU 占用率以相邻两次采样的累计 CPU 时间差分计算,
  * 内存换算为 GB 与系统总量百分比。
  * 数据仅供 UI 面板展示,不暴露给 dsh 使用。
@@ -14,10 +14,12 @@ import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { cpus, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
+import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS, HISTORY_CAPACITY } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
 
+import { readCgroupLimits } from './cgroup'
 import { resolveClkTck } from './clock-ticks'
+import { SampleHistory } from './history'
 
 /** 系统进程查询器接口(便于注入假实现测试) */
 export interface ProcessQuery {
@@ -52,6 +54,35 @@ function dropSampler(records: ProcessRecord[], samplerPid: number | undefined): 
   return samplerPid === undefined ? records : records.filter((record) => record.pid !== samplerPid)
 }
 
+/**
+ * CPU 差分基准键:平台给出启动时刻时把基准绑定到该进程实例(pid 加启动时刻),
+ * 否则退回仅按 pid。系统回收 pid 后会分配给新进程,仅按 pid 记账会把上一进程的
+ * 累计 CPU 时间当成新进程的基准,从而出现负差被截零或首个窗口的虚假占用。
+ */
+export function baselineKey(record: ProcessRecord): string {
+  return record.startTimeMs === undefined ? String(record.pid) : `${record.pid}@${record.startTimeMs}`
+}
+
+/**
+ * 解析平台给出的进程创建时刻(导出以便纯函数测试)。
+ * 兼容三种形态:已是毫秒数;PowerShell 5.1 的 `\/Date(毫秒)\/`(可带时区偏移);
+ * PowerShell 7 的 ISO 8601 文本。缺失或不可解析时返回 undefined。
+ */
+export function parseCimDate(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : undefined
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return undefined
+  // PowerShell 5.1 的 ConvertTo-Json 会把 DateTime 写成 JSON 转义后的 `\/Date(毫秒)\/`
+  const wrapped = /^\\?\/?Date\((-?\d+)(?:[+-]\d{4})?\)\\?\/?$/.exec(trimmed)
+  if (wrapped !== null) {
+    const ms = Number(wrapped[1])
+    return Number.isFinite(ms) && ms > 0 ? ms : undefined
+  }
+  const parsed = Date.parse(trimmed)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
 /** 解析 PowerShell 输出的 JSON 进程列表(单对象时包装为数组;导出以便纯函数测试) */
 export function parseRecords(text: string): ProcessRecord[] {
   const data = JSON.parse(text) as unknown
@@ -59,13 +90,17 @@ export function parseRecords(text: string): ProcessRecord[] {
   return list
     .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
     .filter((item) => Number.isInteger(item.ProcessId))
-    .map((item) => ({
-      pid: item.ProcessId as number,
-      parentPid: Number.isInteger(item.ParentProcessId) ? (item.ParentProcessId as number) : null,
-      name: typeof item.Name === 'string' ? item.Name : String(item.ProcessId),
-      cpuSeconds: typeof item.cpu === 'number' && item.cpu > 0 ? item.cpu : 0,
-      workingSetBytes: typeof item.WorkingSetSize === 'number' && item.WorkingSetSize > 0 ? item.WorkingSetSize : 0,
-    }))
+    .map((item) => {
+      const record: ProcessRecord = {
+        pid: item.ProcessId as number,
+        parentPid: Number.isInteger(item.ParentProcessId) ? (item.ParentProcessId as number) : null,
+        name: typeof item.Name === 'string' ? item.Name : String(item.ProcessId),
+        cpuSeconds: typeof item.cpu === 'number' && item.cpu > 0 ? item.cpu : 0,
+        workingSetBytes: typeof item.WorkingSetSize === 'number' && item.WorkingSetSize > 0 ? item.WorkingSetSize : 0,
+      }
+      const startTimeMs = parseCimDate(item.CreationDate)
+      return startTimeMs === undefined ? record : { ...record, startTimeMs }
+    })
 }
 
 /** CIM 主查询:一次取得全量进程的标识、父子关系、累计 CPU 时间与工作集 */
@@ -77,7 +112,7 @@ class CimProcessQuery implements ProcessQuery {
     const script = [
       "$ErrorActionPreference = 'Stop'",
       '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, @{n=\'cpu\';e={($_.UserModeTime + $_.KernelModeTime) / 10000000}}, WorkingSetSize | ConvertTo-Json -Compress',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CreationDate, @{n=\'cpu\';e={($_.UserModeTime + $_.KernelModeTime) / 10000000}}, WorkingSetSize | ConvertTo-Json -Compress',
     ].join('\n')
     const { text, pid } = await runPowershell(script)
     return dropSampler(parseRecords(text), pid)
@@ -155,12 +190,13 @@ export class LinuxProcQuery implements ProcessQuery {
 
   async query(): Promise<ProcessRecord[]> {
     const records: ProcessRecord[] = []
+    const bootTimeMs = this.readBootTimeMs()
     let unreadable = 0
     for (const entry of readdirSync(this.root)) {
       if (!/^\d+$/.test(entry)) continue
       const pid = Number(entry)
       try {
-        records.push(this.readProcess(pid))
+        records.push(this.readProcess(pid, bootTimeMs))
       } catch (error) {
         // 单个进程读取失败(权限或退出竞态)时跳过,不中断整体;
         // 只有权限不足才计入不可读数量,进程已退出(ENOENT)属正常竞态
@@ -172,26 +208,42 @@ export class LinuxProcQuery implements ProcessQuery {
     return records
   }
 
+  /** 系统启动时刻(epoch 毫秒):由 `/proc/uptime` 与当前时刻推出;不可读时返回 undefined */
+  private readBootTimeMs(): number | undefined {
+    try {
+      const uptime = readFileSync(join(this.root, 'uptime'), 'utf8')
+      const seconds = Number(uptime.trim().split(/\s+/)[0])
+      if (!Number.isFinite(seconds) || seconds < 0) return undefined
+      return Date.now() - seconds * 1000
+    } catch {
+      return undefined
+    }
+  }
+
   /** 读取单个进程记录 */
-  private readProcess(pid: number): ProcessRecord {
+  private readProcess(pid: number, bootTimeMs: number | undefined): ProcessRecord {
     const dir = join(this.root, String(pid))
     const stat = readFileSync(join(dir, 'stat'), 'utf8')
     const nameStart = stat.indexOf('(')
     const nameEnd = stat.lastIndexOf(')')
     const tail = stat.slice(nameEnd + 2).trim().split(/\s+/)
-    // tail 自 stat 第 3 字段起:第 4 字段父进程标识、第 14 字段用户态时间、第 15 字段内核态时间
+    // tail 自 stat 第 3 字段起:第 4 字段父进程标识、第 14 字段用户态时间、
+    // 第 15 字段内核态时间、第 22 字段自启动以来的节拍数(tail 下标即字段号减 3)
     const parentPid = Number(tail[1])
     const utime = Number(tail[11])
     const stime = Number(tail[12])
+    const startTicks = Number(tail[19])
     const status = readFileSync(join(dir, 'status'), 'utf8')
     const rssMatch = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status)
-    return {
+    const record: ProcessRecord = {
       pid,
       parentPid: Number.isInteger(parentPid) ? parentPid : null,
       name: stat.slice(nameStart + 1, nameEnd).trim() || String(pid),
       cpuSeconds: ((Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0)) / this.clkTck,
       workingSetBytes: rssMatch ? Number(rssMatch[1]) * 1024 : 0,
     }
+    if (bootTimeMs === undefined || !Number.isFinite(startTicks) || startTicks < 0) return record
+    return { ...record, startTimeMs: bootTimeMs + (startTicks / this.clkTck) * 1000 }
   }
 }
 
@@ -238,6 +290,16 @@ export function parseCpuSeconds(text: string): number {
 }
 
 /**
+ * 解析 ps 的已运行时长字段(etime,格式与累计时间同为 `[[dd-]hh:]mm:ss`)为秒;
+ * 不可解析时返回 null(与 `parseCpuSeconds` 的零值语义区分开,启动时刻不能拿 0 兜底)。
+ */
+export function parseElapsedSeconds(text: string): number | null {
+  const trimmed = text.trim()
+  if (!PS_TIME_PATTERN.test(trimmed)) return null
+  return parseCpuSeconds(trimmed)
+}
+
+/**
  * 取可执行文件名:macOS 的 `comm` 对图形应用会给出完整可执行路径,
  * 取末段便于面板按名称展示(不含路径时原样返回)。
  */
@@ -257,8 +319,9 @@ function executableBaseName(name: string): string {
  */
 export function parsePsRecords(
   text: string,
-  layout: readonly ('pid' | 'ppid' | 'time' | 'rss')[],
+  layout: readonly ('pid' | 'ppid' | 'time' | 'rss' | 'etime')[],
   stats?: { unreadable: number },
+  nowMs: number = Date.now(),
 ): ProcessRecord[] {
   const records: ProcessRecord[] = []
   for (const line of text.split('\n')) {
@@ -271,6 +334,7 @@ export function parsePsRecords(
     let parentPid: number | null = null
     let cpuSeconds = 0
     let workingSetBytes = 0
+    let startTimeMs: number | undefined
     layout.forEach((field, index) => {
       const value = fields[index]
       if (field === 'ppid') {
@@ -279,25 +343,30 @@ export function parsePsRecords(
       } else if (field === 'time') {
         if (PS_TIME_PATTERN.test(value)) cpuSeconds = parseCpuSeconds(value)
         else if (stats) stats.unreadable += 1
+      } else if (field === 'etime') {
+        // ps 只给已运行时长,故启动时刻由采样时刻反推(解析不了时不猜值)
+        const elapsed = parseElapsedSeconds(value)
+        if (elapsed !== null) startTimeMs = nowMs - elapsed * 1000
       } else if (field === 'rss') {
         const kb = Number(value)
         if (Number.isFinite(kb) && kb > 0) workingSetBytes = kb * 1024
         else if (!/^\d+$/.test(value) && stats) stats.unreadable += 1
       }
     })
-    records.push({
+    const record: ProcessRecord = {
       pid,
       parentPid,
       name: executableBaseName(fields.slice(layout.length).join(' ') || String(pid)),
       cpuSeconds,
       workingSetBytes,
-    })
+    }
+    records.push(startTimeMs === undefined ? record : { ...record, startTimeMs })
   }
   return records
 }
 
-/** macOS 查询:ps 全量进程(含父子关系、累计 CPU 时间与常驻内存) */
-export class MacPsQuery implements ProcessQuery {
+/** 类 Unix 查询:ps 全量进程(含父子关系、累计 CPU 时间与常驻内存;macOS 与各 BSD,Solaris,AIX 共用) */
+export class UnixPsQuery implements ProcessQuery {
   /** 首选来源,不视为降级 */
   readonly degraded = false
 
@@ -310,16 +379,16 @@ export class MacPsQuery implements ProcessQuery {
   }
 
   async query(): Promise<ProcessRecord[]> {
-    const { text, pid } = await runPs(['-axo', 'pid=,ppid=,time=,rss=,comm='])
+    const { text, pid } = await runPs(['-axo', 'pid=,ppid=,time=,rss=,etime=,comm='])
     const stats = { unreadable: 0 }
-    const records = parsePsRecords(text, ['pid', 'ppid', 'time', 'rss'], stats)
+    const records = parsePsRecords(text, ['pid', 'ppid', 'time', 'rss', 'etime'], stats)
     this.unreadableCount = stats.unreadable
     return dropSampler(records, pid)
   }
 }
 
-/** macOS 降级查询:ps 去父子关系与累计 CPU 时间(父进程置空、CPU 时间置零,由回退链标注降级) */
-export class MacPsSimpleQuery implements ProcessQuery {
+/** 类 Unix 降级查询:ps 去父子关系与累计 CPU 时间(父进程置空、CPU 时间置零,由回退链标注降级) */
+export class UnixPsSimpleQuery implements ProcessQuery {
   /** 独立使用时即降级来源 */
   readonly degraded = true
 
@@ -329,7 +398,10 @@ export class MacPsSimpleQuery implements ProcessQuery {
   }
 }
 
-/** 按运行时平台创建查询链:Windows 用 PowerShell 回退链,Linux(含 WSL)用 /proc,macOS 用 ps,其余平台占位 */
+/**
+ * 按运行时平台创建查询链:Windows 用 PowerShell 回退链,Linux(含 WSL)用 /proc,
+ * macOS 与其余类 Unix 平台(各 BSD,Solaris,AIX)共用 ps 链,未覆盖的平台为占位实现。
+ */
 export function createPlatformQuery(): ProcessQuery {
   switch (process.platform) {
     case 'win32':
@@ -337,16 +409,26 @@ export function createPlatformQuery(): ProcessQuery {
     case 'linux':
       return new LinuxProcQuery()
     case 'darwin':
-      return new FallbackProcessQuery([new MacPsQuery(), new MacPsSimpleQuery()])
+    case 'freebsd':
+    case 'openbsd':
+    case 'netbsd':
+    case 'sunos':
+    case 'aix':
+      return new FallbackProcessQuery([new UnixPsQuery(), new UnixPsSimpleQuery()])
     default:
       return new UnsupportedQuery(process.platform)
   }
 }
 
-/** 操作系统显示名(Linux 识别发行版与版本) */
+/** 操作系统显示名(Linux 识别发行版与版本,类 Unix 平台给出通用名) */
 export function resolvePlatformLabel(): string {
   if (process.platform === 'win32') return 'Windows'
   if (process.platform === 'darwin') return 'macOS'
+  if (process.platform === 'freebsd') return 'FreeBSD'
+  if (process.platform === 'openbsd') return 'OpenBSD'
+  if (process.platform === 'netbsd') return 'NetBSD'
+  if (process.platform === 'sunos') return 'SunOS'
+  if (process.platform === 'aix') return 'AIX'
   if (process.platform === 'linux') {
     try {
       const osRelease = readFileSync('/etc/os-release', 'utf8')
@@ -369,10 +451,19 @@ export class ProcessCollector {
   private readonly cpuCount = Math.max(1, cpus().length)
   /** 系统物理内存总量(字节) */
   private readonly totalMemoryBytes = totalmem()
+  /**
+   * 运行环境自身的 cgroup 配额(容器内才有值;只读本环境可见的配额,不穿透宿主机)。
+   * 读不到即为非容器环境,后续回退到可见总量。
+   */
+  private readonly limits = readCgroupLimits()
+  /** CPU 百分比分母:有配额按配额核数(可为小数),否则按可见逻辑处理器数 */
+  private readonly cpuDenominator = Math.max(1, this.limits.cpuQuotaCores ?? this.cpuCount)
+  /** 内存百分比分母:有配额按配额字节数,否则按可见物理内存总量 */
+  private readonly memoryDenominator = this.limits.memoryLimitBytes ?? this.totalMemoryBytes
   /** Agent 汇报句柄(按 pid 合并) */
   private readonly reported = new Map<number, ProcessHandle>()
-  /** 各 pid 的上一轮累计 CPU 时间(秒) */
-  private readonly lastCpu = new Map<number, number>()
+  /** 各进程实例的上一轮累计 CPU 时间(键见 `baselineKey`,秒) */
+  private readonly lastCpu = new Map<string, number>()
   /** 最近一次采样时刻(epoch 毫秒) */
   private lastSampledAt = 0
   /** 是否有采集轮询在执行中(查询慢于轮询间隔时跳过本轮,不并发重入) */
@@ -387,6 +478,8 @@ export class ProcessCollector {
   private snapshot: MonitorSnapshot | null = null
   /** 最近一次查询失败原因(诊断用) */
   private lastError: string | null = null
+  /** 短期趋势留存(固定容量,仅在内存中,随插件卸载消失) */
+  private readonly history = new SampleHistory(HISTORY_CAPACITY)
 
   /** 构造采集器 */
   constructor(
@@ -396,8 +489,11 @@ export class ProcessCollector {
     private readonly rootPid: number,
     /** 系统进程查询器 */
     private readonly query: ProcessQuery = createPlatformQuery(),
-    /** 归属解析器:按当前采样进程集合给出「进程 → 会话」归属(缺省时不解析,样本无 owner) */
-    private readonly resolveOwners: (pids: readonly number[]) => Map<number, ProcessOwner> = () => new Map(),
+    /** 归属解析器:按当前采样进程集合与父子关系给出「进程 → 会话」归属(缺省时不解析,样本无 owner) */
+    private readonly resolveOwners: (
+      pids: readonly number[],
+      parents: ReadonlyMap<number, number | null>,
+    ) => Map<number, ProcessOwner> = () => new Map(),
     /** 汇报句柄归属同步:句柄并入监控集合时把其会话标注告知归属解析器 */
     private readonly onReported: (handle: ProcessHandle) => void = () => {},
   ) {}
@@ -459,23 +555,27 @@ export class ProcessCollector {
     const now = Date.now()
     const elapsed = this.lastSampledAt === 0 ? 0 : (now - this.lastSampledAt) / 1000
     const cpuPercentByPid = new Map<number, number>()
+    const aliveKeys = new Set<string>()
     for (const record of records) {
-      const previous = this.lastCpu.get(record.pid)
+      const key = baselineKey(record)
+      aliveKeys.add(key)
+      const previous = this.lastCpu.get(key)
       const cpuPercent = previous !== undefined && elapsed > 0 && record.cpuSeconds >= previous
-        ? ((record.cpuSeconds - previous) / elapsed / this.cpuCount) * 100
+        ? ((record.cpuSeconds - previous) / elapsed / this.cpuDenominator) * 100
         : 0
       cpuPercentByPid.set(record.pid, cpuPercent)
-      this.lastCpu.set(record.pid, record.cpuSeconds)
+      this.lastCpu.set(key, record.cpuSeconds)
     }
     // 清理已退出进程的差分基准:避免长期运行后映射无限增长,同时规避 pid 复用带来的错误差分
-    for (const pid of [...this.lastCpu.keys()]) {
-      if (!byPid.has(pid)) this.lastCpu.delete(pid)
+    for (const key of [...this.lastCpu.keys()]) {
+      if (!aliveKeys.has(key)) this.lastCpu.delete(key)
     }
 
-    // 归属解析按本轮采样集合进行(进程树 + 汇报句柄)
-    const owners = this.resolveOwners(order)
+    // 归属解析按本轮采样集合进行(进程树 + 汇报句柄);父子关系一并给出,供终端子树归属上溯
+    const parents = new Map<number, number | null>(records.map((record) => [record.pid, record.parentPid]))
+    const owners = this.resolveOwners(order, parents)
     const memoryPercentOf = (bytes: number): number =>
-      this.totalMemoryBytes > 0 ? (bytes / this.totalMemoryBytes) * 100 : 0
+      this.memoryDenominator > 0 ? (bytes / this.memoryDenominator) * 100 : 0
     const processes: ResourceSample[] = order.map((pid) => {
       const record = byPid.get(pid)!
       const reportedHandle = this.reported.get(pid)
@@ -511,6 +611,13 @@ export class ProcessCollector {
     const dshMemoryBytes = processes.reduce((sum, sample) => sum + sample.memoryBytes, 0)
     const othersMemoryPercent = memoryPercentOf(othersMemoryBytes)
     this.lastSampledAt = now
+    // 留存一点短期趋势:与快照合计同源(整机口径),容量固定,超出即丢最旧点
+    this.history.push({
+      sampledAt: now,
+      dshCpuPercent,
+      othersCpuPercent,
+      dshMemoryPercent: memoryPercentOf(dshMemoryBytes),
+    })
 
     // 读到但无权读取的进程既不计入 dsh 集合,也不会计入「其他应用」,会使「空闲」偏高,
     // 故与查询链降级一并标注,由面板显示为采集降级
@@ -520,11 +627,14 @@ export class ProcessCollector {
       pollInterval: this.pollInterval,
       cpuCount: this.cpuCount,
       totalMemoryBytes: this.totalMemoryBytes,
+      cpuQuotaCores: this.limits.cpuQuotaCores,
+      memoryLimitBytes: this.limits.memoryLimitBytes,
       rootPid: this.rootPid,
       platform: resolvePlatformLabel(),
       degraded: this.query.degraded || unreadableCount > 0,
       unreadableCount,
       processes,
+      history: this.history.list(),
       totals: {
         othersCpuPercent,
         othersMemoryBytes,

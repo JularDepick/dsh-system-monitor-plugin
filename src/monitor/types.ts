@@ -6,7 +6,8 @@
  * 作者:JularDepick
  */
 
-import type { PanelColumns } from '../constants'
+import type { CpuScope, PanelColumns } from '../constants'
+import type { HistoryPoint } from './history'
 
 /** 进程句柄,用于标识一个可被监控的进程 */
 export interface ProcessHandle {
@@ -66,6 +67,11 @@ export interface ProcessRecord {
   cpuSeconds: number
   /** 工作集内存占用(字节) */
   workingSetBytes: number
+  /**
+   * 进程启动时刻(epoch 毫秒;平台无法给出时为 undefined)。
+   * 用于把 CPU 差分基准绑定到具体进程实例,规避 pid 复用把上一进程的累计 CPU 时间当成新进程基准。
+   */
+  startTimeMs?: number
 }
 
 /**
@@ -97,6 +103,8 @@ export interface PanelOptions {
   laneNames: boolean
   /** 面板视图列数:单列或双列 */
   columns: PanelColumns
+  /** CPU 展示口径:整机或单核(仅影响面板展示换算,采集口径不变) */
+  cpuScope: CpuScope
 }
 
 /** 面板展示快照 */
@@ -109,6 +117,10 @@ export interface MonitorSnapshot {
   cpuCount: number
   /** 系统物理内存总量(字节) */
   totalMemoryBytes: number
+  /** 运行环境自身的 CPU 配额核数(可为小数;非容器环境为 null,此时百分比按可见核数) */
+  cpuQuotaCores: number | null
+  /** 运行环境自身的内存配额(字节;非容器环境为 null,此时百分比按可见内存总量) */
+  memoryLimitBytes: number | null
   /** dsh 根进程标识 */
   rootPid: number
   /** 采集器运行平台的显示名(如 `Windows`,`macOS`,`Ubuntu 24.04.4 LTS`),非 `process.platform` 原值 */
@@ -121,6 +133,11 @@ export interface MonitorSnapshot {
   processes: ResourceSample[]
   /** 整机口径合计(其他应用与空闲),占整机百分比 */
   totals: MachineTotals
+  /**
+   * 短期趋势留存(按时间升序,最多 `HISTORY_CAPACITY` 点;固定容量环形语义,不落盘)。
+   * 面板据此画短期趋势线;占位快照携带空数组。
+   */
+  history: HistoryPoint[]
   /** 面板展示选项(泳道内名称开关等;缺失时客户端按默认值处理) */
   panelOptions?: PanelOptions
   /**

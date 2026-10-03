@@ -39,6 +39,17 @@ export type PanelColumns = 1 | 2
 /** 面板视图列数默认值(单列) */
 export const DEFAULT_PANEL_COLUMNS: PanelColumns = 1
 
+/**
+ * CPU 展示口径:
+ * `machine` 为整机口径(占全部逻辑处理器的百分比,单进程上限 100%),
+ * `core` 为单核口径(占单个逻辑处理器的百分比,多线程进程可超过 100%);
+ * 仅影响面板展示,采集与差分口径始终按整机计算。
+ */
+export type CpuScope = 'machine' | 'core'
+
+/** CPU 展示口径默认值(整机口径,与采集口径一致) */
+export const DEFAULT_CPU_SCOPE: CpuScope = 'machine'
+
 /** 面板本地偏好存储键(浏览器端记住用户在同页配置里的选择) */
 export const PANEL_STORAGE_KEY = 'dsh-system-monitor:preferences'
 
@@ -76,9 +87,13 @@ export const CLK_TCK_PROBE_MIN_UPTIME_SECONDS = 60
 /**
  * 时钟节拍缓存格式版本:
  * 缓存一经写入会被长期复用,故推算口径或缓存结构变化时必须递增该值,
- * 让旧缓存自动失效并重新探测(避免把历史错误值一直沿用下去)。
+ * 让旧缓存自动失效并重新探测(避免把历史错误值一直沿用下去);
+ * 第 3 版起把单次诊断字段改为探测历史数组。
  */
-export const CLK_TCK_CACHE_VERSION = 2
+export const CLK_TCK_CACHE_VERSION = 3
+
+/** 状态文件中保留的探测历史条数上限(旧值在前,超出按先入先出丢弃) */
+export const CLK_TCK_PROBE_HISTORY_MAX = 10
 
 /** 面板数据端点路径(host webserver 路由,浏览器端同源轮询) */
 export const MONITOR_DATA_PATH = '/api/system-monitor/snapshot'
@@ -119,6 +134,24 @@ export const PANEL_COLUMN_GUTTER = 16
 
 /** 面板内容最大宽度(像素):tab 区域内尽量用满可用宽度,仅在超宽屏上收窄以免表格与占比条过度拉伸 */
 export const PANEL_MAX_WIDTH = 1440
+
+/**
+ * 双列视图的最小栅格宽度(像素):用户选择双列但可用宽度低于此值时自动回退单列,
+ * 避免窄屏下每张卡被压到无法阅读;取值约等于两列各自可用的最小宽度加一处列间距。
+ */
+export const PANEL_CARDS_DOUBLE_MIN_WIDTH = 720
+
+/**
+ * 短期趋势留存容量(采样点条数):按默认轮询间隔约折合两分钟;
+ * 容量固定,超出即丢最旧点,留存只在内存中且随插件卸载消失。
+ */
+export const HISTORY_CAPACITY = 120
+
+/** 短期趋势线高度(像素):窄条,只作趋势判读,不取代卡片内的占比条 */
+export const PANEL_HISTORY_HEIGHT = 40
+
+/** 短期趋势线上「高占用阈值」参考线的虚线间距(像素) */
+export const PANEL_HISTORY_DASH = 4
 
 /** 面板区域栅格:列数由用户选择(单列或双列),列间距取 `PANEL_STACK_GAP` */
 

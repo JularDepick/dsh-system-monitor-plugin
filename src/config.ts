@@ -6,8 +6,14 @@
  */
 
 import Schema from '@deepseek-ai/schemastery'
-import { DEFAULT_LANE_NAMES, DEFAULT_PANEL_COLUMNS, DEFAULT_POLL_INTERVAL, MIN_POLL_INTERVAL } from './constants'
-import type { PanelColumns } from './constants'
+import {
+  DEFAULT_CPU_SCOPE,
+  DEFAULT_LANE_NAMES,
+  DEFAULT_PANEL_COLUMNS,
+  DEFAULT_POLL_INTERVAL,
+  MIN_POLL_INTERVAL,
+} from './constants'
+import type { CpuScope, PanelColumns } from './constants'
 
 export interface Config {
   /** 资源采集轮询间隔(毫秒,不低于 `MIN_POLL_INTERVAL`) */
@@ -16,10 +22,13 @@ export interface Config {
   laneNames: boolean
   /** 面板视图列数:单列或双列(卡片纵向排布或两列并列) */
   columns: PanelColumns
+  /** CPU 展示口径:整机或单核(仅影响面板展示换算,采集口径不变) */
+  cpuScope: CpuScope
 }
 
 export const Config: Schema<Config> = Schema.object({
   pollInterval: Schema.number().min(MIN_POLL_INTERVAL).default(DEFAULT_POLL_INTERVAL),
   laneNames: Schema.boolean().default(DEFAULT_LANE_NAMES),
   columns: Schema.union([1, 2]).default(DEFAULT_PANEL_COLUMNS),
+  cpuScope: Schema.union(['machine', 'core']).default(DEFAULT_CPU_SCOPE),
 })

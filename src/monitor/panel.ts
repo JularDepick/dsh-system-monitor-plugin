@@ -51,11 +51,15 @@ export class MonitorPanel {
       pollInterval: this.collector.pollInterval,
       cpuCount: 0,
       totalMemoryBytes: 0,
+      cpuQuotaCores: null,
+      memoryLimitBytes: null,
       rootPid: 0,
       platform: '',
       degraded: false,
       unreadableCount: 0,
       processes: [],
+      // 占位留存为空:面板按 sampledAt 为 0 判为无有效数据,不画趋势线
+      history: [],
       // 占位合计:面板以 sampledAt 为 0 判为无有效数据,这里的数值不会被当作真实占用展示
       totals: {
         othersCpuPercent: 0,

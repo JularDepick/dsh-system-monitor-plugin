@@ -4,6 +4,7 @@
  * /proc 的时间字段按用户态 ABI 常量 USER_HZ 计,主流架构为 100,异构内核可能取别的值。
  * 首次运行时探测一次并缓存到 DSH_HOME 下的插件状态文件,后续运行直接复用,不再探测;
  * 缓存不进插件 Config schema,因此宿主设置面板不会出现该项;探测异常时不写盘,下次启动重试。
+ * 状态文件同时保留最近若干次探测的诊断记录,便于异构内核环境下排查反复探测的差异。
  */
 
 import { execFileSync } from 'node:child_process'
@@ -14,6 +15,7 @@ import {
   CLK_TCK_CACHE_VERSION,
   CLK_TCK_MAX,
   CLK_TCK_MIN,
+  CLK_TCK_PROBE_HISTORY_MAX,
   CLK_TCK_PROBE_MIN_UPTIME_SECONDS,
   CLK_TCK_PROBE_TOLERANCE,
   ENV_CACHE_DIR,
@@ -22,12 +24,45 @@ import {
   QUERY_TIMEOUT_MS,
 } from '../constants'
 
-/** 缓存文件内容(clkTck 为插件读取项,probe 仅供人工诊断) */
+/** 单次探测的诊断记录(仅供人工排查,不参与取值) */
+export interface ClkTckProbe {
+  /** 探测时刻(ISO 字符串) */
+  at: string
+  /** 运行平台标识 */
+  platform: string
+  /** 系统标准接口的结果(缺失或失败为 null) */
+  getconf: number | null
+  /** 由 /proc 推算的结果(失败为 null) */
+  derived: number | null
+  /** 两法偏差是否超过容差 */
+  mismatch: boolean
+  /** 本次采信并写入的节拍值 */
+  value: number
+}
+
+/** 缓存文件内容(clkTck 为插件读取项,probes 仅供人工诊断) */
 interface ClkTckCache {
   /** 缓存格式版本,与常量不一致的旧缓存一律作废 */
   version: number
   clkTck: number
-  probe?: Record<string, unknown>
+  /** 最近若干次探测的诊断记录(旧值在前) */
+  probes: ClkTckProbe[]
+}
+
+/**
+ * 追加一条探测历史并截断到上限(导出以便纯函数测试)。
+ * 返回新数组且不修改入参;上限用于避免状态文件随反复探测无限增长。
+ */
+export function appendProbeHistory(
+  existing: readonly ClkTckProbe[] | undefined,
+  entry: ClkTckProbe,
+  max: number = CLK_TCK_PROBE_HISTORY_MAX,
+): ClkTckProbe[] {
+  const limit = Math.max(0, max)
+  const keepCount = Math.max(0, limit - 1)
+  const previous = Array.isArray(existing) ? existing : []
+  const kept = keepCount === 0 ? [] : previous.slice(-keepCount)
+  return limit === 0 ? [] : [...kept, entry]
 }
 
 /** 缓存文件绝对路径:DSH_HOME 优先,缺失时退化到 ~/.dsh */
@@ -41,15 +76,20 @@ function isPlausibleClkTck(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= CLK_TCK_MIN && value <= CLK_TCK_MAX
 }
 
-/** 读取缓存中的节拍值(缺失,版本不符或不可信时返回 null,由调用方重新探测) */
-function readCachedClkTck(): number | null {
+/** 读取状态文件原始内容(缺失或损坏时为 null) */
+function readCache(): Partial<ClkTckCache> | null {
   try {
-    const parsed = JSON.parse(readFileSync(clockTicksCacheFile(), 'utf8')) as ClkTckCache
-    if (parsed.version !== CLK_TCK_CACHE_VERSION) return null
-    return isPlausibleClkTck(parsed.clkTck) ? parsed.clkTck : null
+    const parsed = JSON.parse(readFileSync(clockTicksCacheFile(), 'utf8')) as Partial<ClkTckCache>
+    return typeof parsed === 'object' && parsed !== null ? parsed : null
   } catch {
     return null
   }
+}
+
+/** 取出可复用的节拍值(结构版本一致且值可信时才返回,否则返回 null 由调用方重新探测) */
+function usableClkTck(raw: Partial<ClkTckCache> | null): number | null {
+  if (raw === null || raw.version !== CLK_TCK_CACHE_VERSION || !isPlausibleClkTck(raw.clkTck)) return null
+  return raw.clkTck
 }
 
 /** 写入缓存(尽力而为:目录不可写时静默,仅影响下次是否重新探测) */
@@ -114,11 +154,13 @@ export function probeDerived(root: string): number | null {
 
 /**
  * 取得本环境的时钟节拍数:缓存命中直接复用,否则探测一次并校验后再写盘。
- * 非 Linux 平台与探测不可信时返回常量兜底值(且不写盘,下次启动重试)。
+ * 非 Linux 平台与探测不可信时返回常量兜底值(且不写盘,下次启动重试);
+ * 写盘时把本次探测追加进历史,历史只在同结构旧文件可读时续写(结构版本变化会作废旧文件)。
  */
 export function resolveClkTck(root = '/proc'): number {
   if (process.platform !== 'linux') return LINUX_CLK_TCK
-  const cached = readCachedClkTck()
+  const raw = readCache()
+  const cached = usableClkTck(raw)
   if (cached !== null) return cached
 
   const getconf = probeGetconf()
@@ -133,13 +175,14 @@ export function resolveClkTck(root = '/proc'): number {
   writeCache({
     version: CLK_TCK_CACHE_VERSION,
     clkTck: value,
-    probe: {
+    probes: appendProbeHistory(raw?.probes, {
+      at: new Date().toISOString(),
+      platform: process.platform,
       getconf,
       derived,
       mismatch,
-      platform: process.platform,
-      at: new Date().toISOString(),
-    },
+      value,
+    }),
   })
   return value
 }

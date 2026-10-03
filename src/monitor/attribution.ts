@@ -16,6 +16,9 @@ import type { ProcessOwner } from './types'
 /** 宿主在模型 shell 调用中注入的会话标识环境变量(Linux/WSL 可经 /proc/<pid>/environ 读回) */
 const SESSION_ENV_KEY = 'DSH_SESSION_ID='
 
+/** 沿父进程链向上查找的深度上限(防止异常链成环导致解析失控) */
+const SESSION_SUBTREE_MAX_DEPTH = 32
+
 /** 会话元信息(宿主会话清单的一项) */
 export interface SessionInfo {
   /** 会话标识 */
@@ -37,6 +40,30 @@ export function parseSessionIdFromEnviron(environ: string): string | undefined {
 }
 
 /**
+ * 沿父进程链向上查找终端(PTY)锚点所属会话(导出以便纯函数回归)。
+ *
+ * 终端服务只给出该会话的**顶层**终端 pid,而模型 shell 调用会继续派生子进程,
+ * 故整棵后代子树都应归给同一会话;这里从该进程的父进程开始逐级上溯,
+ * 命中终端 pid 即返回其会话;链中断、成环或超过深度上限时返回 undefined。
+ */
+export function terminalAncestor(
+  pid: number,
+  parents: ReadonlyMap<number, number | null>,
+  terminals: ReadonlyMap<number, string>,
+  maxDepth: number = SESSION_SUBTREE_MAX_DEPTH,
+): string | undefined {
+  let current = pid
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    const parent = parents.get(current)
+    if (parent === undefined || parent === null || parent === current) return undefined
+    const session = terminals.get(parent)
+    if (session !== undefined) return session
+    current = parent
+  }
+  return undefined
+}
+
+/**
  * 归属解析器。
  *
  * 环境在进程生命周期内不变,故解析结果按 pid 缓存;每轮以当前 pid 集合裁剪缓存,
@@ -51,6 +78,8 @@ export class OwnerResolver {
   private reported = new Map<number, string>()
   /** 会话元信息(会话标识 → 显示名等) */
   private sessions = new Map<string, SessionInfo>()
+  /** 本轮采样的父子关系(pid → 父 pid;用于终端子树归属) */
+  private parents: ReadonlyMap<number, number | null> = new Map()
 
   /** 构造解析器 */
   constructor(
@@ -73,7 +102,8 @@ export class OwnerResolver {
   }
 
   /** 解析一批进程的归属(仅返回有归属的项) */
-  resolve(pids: readonly number[]): Map<number, ProcessOwner> {
+  resolve(pids: readonly number[], parents?: ReadonlyMap<number, number | null>): Map<number, ProcessOwner> {
+    this.parents = parents ?? new Map()
     const owners = new Map<number, ProcessOwner>()
     for (const pid of pids) {
       const owner = this.resolveOne(pid)
@@ -93,6 +123,10 @@ export class OwnerResolver {
 
     const terminalSession = this.terminals.get(pid)
     if (terminalSession !== undefined) return this.decorate(terminalSession)
+
+    // 终端 pid 的整棵后代子树同属该会话(终端服务只给顶层 pid,模型 shell 派生链需上溯补齐)
+    const subtreeSession = terminalAncestor(pid, this.parents, this.terminals)
+    if (subtreeSession !== undefined) return this.decorate(subtreeSession)
 
     const reportedSession = this.reported.get(pid)
     if (reportedSession !== undefined) return this.decorate(reportedSession)

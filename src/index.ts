@@ -20,8 +20,12 @@ export { LinuxProcQuery, ProcessCollector, resolvePlatformLabel } from './monito
  * 纯函数解析与探测导出:仅供回归校验调用(源码侧解析用例与构建产物侧冒烟脚本共用同一份用例),
  * 不参与插件运行时装配,也不构成对外功能接口
  */
-export { parseCpuSeconds, parsePsRecords, parseRecords } from './monitor/collector'
-export { probeDerived } from './monitor/clock-ticks'
+export { baselineKey, parseCimDate, parseCpuSeconds, parseElapsedSeconds, parsePsRecords, parseRecords } from './monitor/collector'
+export { appendProbeHistory, probeDerived } from './monitor/clock-ticks'
+export { cpuDisplayFactor, normalizeCpuScope, scaleCpuPercent } from './monitor/cpu-scope'
+export { parseCpuCfsQuota, parseCpuMax, parseMemoryLimit, parseMemoryMax } from './monitor/cgroup'
+export { parseSessionIdFromEnviron, terminalAncestor } from './monitor/attribution'
+export { SampleHistory, historyPolyline, historySummary } from './monitor/history'
 export type {
   MonitorSnapshot,
   ProcessHandle,
