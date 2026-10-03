@@ -162,7 +162,7 @@ export const PANEL_SERIES_COLORS = [
   'var(--dsw-static-neutral-400, #a2a4a6)',
 ]
 
-/** 主进程/宿主泳道的固定配色(继承 profile web 品牌蓝) */
+/** 主进程/宿主泳道的固定配色(取当前 profile 的品牌色 token;web 与 desktop 各自继承其主题) */
 export const PANEL_PRIMARY_COLOR = 'var(--dsw-alias-brand-primary, var(--dsw-static-deepseek-500, #4176e6))'
 
 /** 资源占比条轨道底色(静态面色 token,不用交互态 hover token) */
@@ -174,7 +174,7 @@ export const PANEL_IDLE_COLOR = 'var(--dsw-alias-bg-layer-3, var(--dsw-alias-bor
 /** 占比条外边框宽度(像素) */
 export const PANEL_SHARE_BAR_BORDER_WIDTH = 1
 
-/** 占比条外边框颜色(继承 profile web 的描边色) */
+/** 占比条外边框颜色(取当前 profile 的描边色 token) */
 export const PANEL_SHARE_BAR_BORDER_COLOR = 'var(--dsw-alias-border-l1)'
 
 /** 资源占比堆叠条高度(像素;含 1px 外边框) */

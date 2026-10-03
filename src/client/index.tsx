@@ -178,7 +178,7 @@ function seriesColor(index: number): string {
 }
 
 /**
- * 各分段的最终配色:主进程/宿主泳道固定取品牌蓝(`PANEL_PRIMARY_COLOR`,继承 profile web),
+ * 各分段的最终配色:主进程/宿主泳道固定取品牌色(`PANEL_PRIMARY_COLOR`,继承当前 profile),
  * 其余成员按出现顺序取系列色——系列色不参与主泳道,主泳道也不占用系列色名额。
  */
 function groupColors(groups: readonly ShareGroup[]): string[] {
@@ -925,7 +925,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   /** 面板本地偏好(泳道内名称、布局;null 表示本地未改过,沿用插件配置) */
   const [preferences, setPreferences] = useState<StoredPreferences>(readStoredPreferences)
 
-  /** 配置入口按钮(面板右上角;用宿主官方按钮,配色继承 profile web) */
+  /** 配置入口按钮(面板右上角;用宿主官方按钮,配色继承当前 profile) */
   const settingsButton = (
     <Button variant="ghost" size="sm" onClick={() => setConfigOpen((open) => !open)}>
       {t('config.open')}
@@ -991,7 +991,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
 
   /**
    * 配置子页:面板内展开的配置视图,由右上角按钮呼起、ESC 或「关闭」收起。
-   * 控件一律用宿主官方组件(开关、分段控件、按钮),配色与外观继承 profile web;
+   * 控件一律用宿主官方组件(开关、分段控件、按钮),配色与外观继承当前 profile;
    * 设置行收在 PANEL_SETTINGS_WIDTH 内,避免宽卡片下标签与控件相距过远。
    */
   const configCard = (

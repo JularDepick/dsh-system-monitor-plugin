@@ -16,6 +16,12 @@ export const inject = ['tools']
 
 export { Config }
 export { LinuxProcQuery, ProcessCollector, resolvePlatformLabel } from './monitor/collector'
+/**
+ * 纯函数解析与探测导出:仅供回归校验调用(源码侧解析用例与构建产物侧冒烟脚本共用同一份用例),
+ * 不参与插件运行时装配,也不构成对外功能接口
+ */
+export { parseCpuSeconds, parsePsRecords, parseRecords } from './monitor/collector'
+export { probeDerived } from './monitor/clock-ticks'
 export type {
   MonitorSnapshot,
   ProcessHandle,
