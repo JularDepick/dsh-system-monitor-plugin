@@ -25,12 +25,12 @@ export const DEFAULT_POLL_INTERVAL = 1000
 export const DEFAULT_LANE_NAMES = true
 
 /**
- * 面板布局:左右并列(宽屏两列,窄屏自动退回单列)与上下同列(始终单列堆叠)
+ * 面板视图列数:1 为单列(全部区域纵向排布),2 为双列(两列并列)
  */
-export type PanelLayout = 'side' | 'stack'
+export type PanelColumns = 1 | 2
 
-/** 面板布局默认值(左右并列) */
-export const DEFAULT_PANEL_LAYOUT: PanelLayout = 'side'
+/** 面板视图列数默认值(单列) */
+export const DEFAULT_PANEL_COLUMNS: PanelColumns = 1
 
 /** 面板本地偏好存储键(浏览器端记住用户在同页配置里的选择) */
 export const PANEL_STORAGE_KEY = 'dsh-system-monitor:preferences'
@@ -84,8 +84,7 @@ export const PANEL_COLUMN_GUTTER = 16
 /** 面板内容最大宽度(像素):tab 区域内尽量用满可用宽度,仅在超宽屏上收窄以免表格与占比条过度拉伸 */
 export const PANEL_MAX_WIDTH = 1440
 
-/** 维度卡的栅格最小列宽(像素):可用宽度容得下两列时两张维度卡并排,否则纵向堆叠 */
-export const PANEL_CARDS_MIN_COLUMN_WIDTH = 460
+/** 面板区域栅格:列数由用户选择(单列或双列),列间距取 `PANEL_STACK_GAP` */
 
 /** 面板顶部内边距(像素;分隔宿主标签栏下边框) */
 export const PANEL_TOP_PADDING = 16
@@ -201,6 +200,9 @@ export const PANEL_OTHERS_COLOR = 'var(--dsw-static-neutral-400)'
 /** 堆叠条段标签的字宽估算(像素,12px 等宽数字下约 7px/字符) */
 export const PANEL_SHARE_LABEL_CHAR_WIDTH = 7
 
+/** 中日韩字符的宽度估算(像素,基准字号下约整宽 14px;其余字符按拉丁字宽计) */
+export const PANEL_TEXT_CJK_WIDTH = 14
+
 /** 堆叠条段标签的左右留白(像素,段宽需容下「文字宽 + 该留白」才显示标签) */
 export const PANEL_SHARE_LABEL_PADDING = 4
 
@@ -216,23 +218,29 @@ export const PANEL_SWATCH_SIZE = 10
 /** 表格数据单元格左右内边距(像素,固定列宽由此与数值文本宽度推导) */
 export const PANEL_CELL_PADDING_X = 6
 
-/** 进程表 PID 列宽(像素,固定列宽策略下不随内容变化) */
+/**
+ * 表格列宽为「内容自适应 + 富余按比例分配」:下列常量是各列的内容宽度下限(兜底),
+ * 实际列宽先由该列最长内容(含表头文案)估出,再把表格富余宽度按各列内容宽度比例分给所有列。
+ */
 export const PANEL_TABLE_PID_WIDTH = 64
 
-/** 进程表父进程列宽(像素,固定列宽策略下不随内容变化) */
+/** 进程表父进程列最小宽度(像素) */
 export const PANEL_TABLE_PARENT_WIDTH = 72
 
-/** 进程表 CPU 列宽(像素,容纳 100.00% 于基准字号) */
-export const PANEL_TABLE_CPU_WIDTH = 76
-
-/** 进程表会话名称列宽(像素) */
+/** 进程表会话名称列最小宽度(像素) */
 export const PANEL_TABLE_SESSION_WIDTH = 140
 
-/** 表格内存列拆分为两列:具体数值列宽(像素,容纳「999.99GB」于基准字号) */
+/** 进程表 CPU 列最小宽度(像素) */
+export const PANEL_TABLE_CPU_WIDTH = 76
+
+/** 内存列(具体数值)最小宽度(像素) */
 export const PANEL_TABLE_MEMORY_VALUE_WIDTH = 104
 
-/** 表格内存列拆分为两列:占比列宽(像素,容纳「100.00%」于基准字号) */
+/** 内存列(占比)最小宽度(像素) */
 export const PANEL_TABLE_MEMORY_PERCENT_WIDTH = 64
 
-/** 对话表进程数列宽(像素) */
+/** 对话表进程数列最小宽度(像素) */
 export const PANEL_TABLE_SESSION_COUNT_WIDTH = 64
+
+/** 名称列最小宽度(像素;进程名/会话名很长时也保证可读) */
+export const PANEL_TABLE_NAME_MIN_WIDTH = 160
