@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  CLK_TCK_CACHE_VERSION,
   CLK_TCK_MAX,
   CLK_TCK_MIN,
   CLK_TCK_PROBE_MIN_UPTIME_SECONDS,
@@ -23,6 +24,8 @@ import {
 
 /** 缓存文件内容(clkTck 为插件读取项,probe 仅供人工诊断) */
 interface ClkTckCache {
+  /** 缓存格式版本,与常量不一致的旧缓存一律作废 */
+  version: number
   clkTck: number
   probe?: Record<string, unknown>
 }
@@ -38,10 +41,11 @@ function isPlausibleClkTck(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= CLK_TCK_MIN && value <= CLK_TCK_MAX
 }
 
-/** 读取缓存中的节拍值(缺失或不可信时返回 null) */
+/** 读取缓存中的节拍值(缺失,版本不符或不可信时返回 null,由调用方重新探测) */
 function readCachedClkTck(): number | null {
   try {
     const parsed = JSON.parse(readFileSync(clockTicksCacheFile(), 'utf8')) as ClkTckCache
+    if (parsed.version !== CLK_TCK_CACHE_VERSION) return null
     return isPlausibleClkTck(parsed.clkTck) ? parsed.clkTck : null
   } catch {
     return null
@@ -71,23 +75,36 @@ function probeGetconf(): number | null {
 }
 
 /**
- * 探测法二:用 /proc/stat 的 CPU 总 jiffies 除以 /proc/uptime 推算节拍数。
- * 与实际读取的字段同源,故两者不一致时采信它;开机时间过短时误差大,直接跳过。
+ * 探测法二(导出以便纯函数测试):用 /proc/stat 的处理器累计节拍除以 /proc/uptime 推算节拍数。
+ *
+ * 时间字段单位必须按**单个处理器**的节拍口径算:每个核各自按 USER_HZ 累加(空闲时也在累加),
+ * 故任取一个 `cpuN` 行除以墙钟开机时长即得 USER_HZ。
+ * 注意 `/proc/stat` 首行 `cpu` 是全部 `cpuN` 行的**合计**,直接除以 uptime 会得到 `USER_HZ × 核数`
+ * (多核机器上数值偏大数倍,会让 CPU 占用率同比例偏小),故合计行只作为单核行缺失时的兜底,
+ * 且必须按 `cpuN` 行数摊平。该推算与实际读取的字段同源,故两法不一致时采信它。
  */
-function probeDerived(root: string): number | null {
+export function probeDerived(root: string): number | null {
   try {
     const uptimeText = readFileSync(join(root, 'uptime'), 'utf8').split(/\s+/)[0] ?? ''
     const uptime = Number.parseFloat(uptimeText)
     if (!Number.isFinite(uptime) || uptime < CLK_TCK_PROBE_MIN_UPTIME_SECONDS) return null
-    const cpuLine = readFileSync(join(root, 'stat'), 'utf8')
-      .split('\n')
-      .find((line) => line.startsWith('cpu '))
-    if (cpuLine === undefined) return null
-    const jiffies = cpuLine
-      .trim()
-      .split(/\s+/)
-      .slice(1)
-      .reduce((sum, field) => sum + (Number.parseInt(field, 10) || 0), 0)
+
+    const lines = readFileSync(join(root, 'stat'), 'utf8').split('\n')
+    const jiffiesOf = (line: string): number =>
+      line
+        .trim()
+        .split(/\s+/)
+        .slice(1)
+        .reduce((sum, field) => sum + (Number.parseInt(field, 10) || 0), 0)
+
+    const perCpuLines = lines.filter((line) => /^cpu\d+\s/.test(line))
+    if (perCpuLines.length === 0) return null
+    let jiffies = jiffiesOf(perCpuLines[0])
+    if (jiffies <= 0) {
+      // 单核行读不出数值时退回合计行:合计是全部核之和,须按核数摊平
+      const totalLine = lines.find((line) => line.startsWith('cpu '))
+      jiffies = totalLine === undefined ? 0 : jiffiesOf(totalLine) / perCpuLines.length
+    }
     if (jiffies <= 0) return null
     return Math.round((jiffies / uptime) * 100) / 100
   } catch {
@@ -114,6 +131,7 @@ export function resolveClkTck(root = '/proc'): number {
 
   if (!isPlausibleClkTck(value)) return LINUX_CLK_TCK
   writeCache({
+    version: CLK_TCK_CACHE_VERSION,
     clkTck: value,
     probe: {
       getconf,

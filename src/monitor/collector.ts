@@ -25,21 +25,31 @@ export interface ProcessQuery {
   query(): Promise<ProcessRecord[]>
   /** 最近一次查询是否走降级来源(未查询或首选来源成功时为 false) */
   readonly degraded: boolean
+  /** 最近一次查询中读到但无权读取的进程数(平台无法判定时为 0) */
+  readonly unreadable?: number
 }
 
-/** 执行 PowerShell 脚本并返回输出文本 */
-function runPowershell(script: string): Promise<string> {
+/**
+ * 执行 PowerShell 脚本并返回输出文本与子进程标识。
+ * 查询进程本身也会出现在它自己的枚举结果里,故由调用方按该标识剔除。
+ */
+function runPowershell(script: string): Promise<{ text: string; pid: number | undefined }> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
       { windowsHide: true, timeout: QUERY_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
       (error, stdout) => {
         if (error) reject(error)
-        else resolve(stdout)
+        else resolve({ text: stdout, pid: child.pid })
       },
     )
   })
+}
+
+/** 剔除查询进程自身的记录:它是本次采集派生的工具进程,不属于被监控对象 */
+function dropSampler(records: ProcessRecord[], samplerPid: number | undefined): ProcessRecord[] {
+  return samplerPid === undefined ? records : records.filter((record) => record.pid !== samplerPid)
 }
 
 /** 解析 PowerShell 输出的 JSON 进程列表(单对象时包装为数组;导出以便纯函数测试) */
@@ -69,7 +79,8 @@ class CimProcessQuery implements ProcessQuery {
       '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
       'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, @{n=\'cpu\';e={($_.UserModeTime + $_.KernelModeTime) / 10000000}}, WorkingSetSize | ConvertTo-Json -Compress',
     ].join('\n')
-    return parseRecords(await runPowershell(script))
+    const { text, pid } = await runPowershell(script)
+    return dropSampler(parseRecords(text), pid)
   }
 }
 
@@ -84,7 +95,8 @@ class GetProcessQuery implements ProcessQuery {
       '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
       "Get-Process | Select-Object @{n='ProcessId';e={$_.Id}}, @{n='ParentProcessId';e={$null}}, Name, @{n='cpu';e={if ($null -eq $_.CPU) { 0 } else { $_.CPU }}}, @{n='WorkingSetSize';e={if ($null -eq $_.WorkingSet64) { 0 } else { $_.WorkingSet64 }}} | ConvertTo-Json -Compress",
     ].join('\n')
-    return parseRecords(await runPowershell(script))
+    const { text, pid } = await runPowershell(script)
+    return dropSampler(parseRecords(text), pid)
   }
 }
 
@@ -92,10 +104,17 @@ class GetProcessQuery implements ProcessQuery {
 class FallbackProcessQuery implements ProcessQuery {
   /** 最近一次成功查询的索引(未成功为 -1) */
   private lastIndex = -1
+  /** 最近一次成功查询源报告的无权读取数量 */
+  private lastUnreadable = 0
 
   /** 最近一次查询是否走降级来源(首选索引 0 之外均视为降级) */
   get degraded(): boolean {
     return this.lastIndex > 0
+  }
+
+  /** 最近一次成功查询源报告的不可读进程数 */
+  get unreadable(): number {
+    return this.lastUnreadable
   }
 
   /** 构造回退查询器 */
@@ -108,6 +127,7 @@ class FallbackProcessQuery implements ProcessQuery {
       try {
         const records = await query.query()
         this.lastIndex = index
+        this.lastUnreadable = query.unreadable ?? 0
         return records
       } catch (error) {
         lastError = error
@@ -122,20 +142,33 @@ export class LinuxProcQuery implements ProcessQuery {
   /** 首选来源,不视为降级 */
   readonly degraded = false
 
+  /** 最近一次查询中因权限不足被跳过的进程数 */
+  private unreadableCount = 0
+
   /** 构造 Linux 查询器:时钟节拍默认走探测与缓存(非 Linux 或探测不可信时为常量兜底) */
   constructor(private readonly root = '/proc', private readonly clkTck: number = resolveClkTck(root)) {}
 
+  /** 最近一次查询中因权限不足被跳过的进程数(读不到的进程不会被计入任何一侧) */
+  get unreadable(): number {
+    return this.unreadableCount
+  }
+
   async query(): Promise<ProcessRecord[]> {
     const records: ProcessRecord[] = []
+    let unreadable = 0
     for (const entry of readdirSync(this.root)) {
       if (!/^\d+$/.test(entry)) continue
       const pid = Number(entry)
       try {
         records.push(this.readProcess(pid))
-      } catch {
-        // 单个进程读取失败(权限或退出竞态)时跳过,不中断整体
+      } catch (error) {
+        // 单个进程读取失败(权限或退出竞态)时跳过,不中断整体;
+        // 只有权限不足才计入不可读数量,进程已退出(ENOENT)属正常竞态
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'EACCES' || code === 'EPERM') unreadable += 1
       }
     }
+    this.unreadableCount = unreadable
     return records
   }
 
@@ -175,24 +208,27 @@ class UnsupportedQuery implements ProcessQuery {
   }
 }
 
-/** 执行 ps 并返回输出文本(macOS 采集) */
-function runPs(args: readonly string[]): Promise<string> {
+/** 执行 ps 并返回输出文本与子进程标识(macOS 采集;ps 也会出现在自己的输出里,由调用方剔除) */
+function runPs(args: readonly string[]): Promise<{ text: string; pid: number | undefined }> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       'ps',
       [...args],
       { timeout: QUERY_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
       (error, stdout) => {
         if (error) reject(error)
-        else resolve(stdout)
+        else resolve({ text: stdout, pid: child.pid })
       },
     )
   })
 }
 
+/** ps 累计 CPU 时间字段格式([[dd-]hh:]mm:ss,秒可带小数) */
+const PS_TIME_PATTERN = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/
+
 /** 解析 ps 的累计 CPU 时间字段([[dd-]hh:]mm:ss)为秒(导出以便纯函数测试) */
 export function parseCpuSeconds(text: string): number {
-  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(text.trim())
+  const match = PS_TIME_PATTERN.exec(text.trim())
   if (match === null) return 0
   const days = Number(match[1] ?? 0)
   const hours = Number(match[2] ?? 0)
@@ -202,11 +238,28 @@ export function parseCpuSeconds(text: string): number {
 }
 
 /**
+ * 取可执行文件名:macOS 的 `comm` 对图形应用会给出完整可执行路径,
+ * 取末段便于面板按名称展示(不含路径时原样返回)。
+ */
+function executableBaseName(name: string): string {
+  const trimmed = name.trim()
+  const slash = trimmed.lastIndexOf('/')
+  if (slash < 0) return trimmed
+  const base = trimmed.slice(slash + 1)
+  return base.length > 0 ? base : trimmed
+}
+
+/**
  * 解析 macOS ps 输出:字段顺序由调用方给定,名称固定放在最后。
  * 注意不能用 `split(sep, limit)` 取名称——它只截断元素个数,余下内容会被丢弃;
  * 故先整行按空白切开,再把布局字段之后的余下字段拼回名称(进程名可含空格)。
+ * `stats.unreadable` 累计布局字段给出非数值(如 `-`,空)的记录数,供面板标注部分不可读。
  */
-export function parsePsRecords(text: string, layout: readonly ('pid' | 'ppid' | 'time' | 'rss')[]): ProcessRecord[] {
+export function parsePsRecords(
+  text: string,
+  layout: readonly ('pid' | 'ppid' | 'time' | 'rss')[],
+  stats?: { unreadable: number },
+): ProcessRecord[] {
   const records: ProcessRecord[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
@@ -224,16 +277,18 @@ export function parsePsRecords(text: string, layout: readonly ('pid' | 'ppid' | 
         const parsed = Number(value)
         parentPid = Number.isInteger(parsed) && parsed > 0 ? parsed : null
       } else if (field === 'time') {
-        cpuSeconds = parseCpuSeconds(value)
+        if (PS_TIME_PATTERN.test(value)) cpuSeconds = parseCpuSeconds(value)
+        else if (stats) stats.unreadable += 1
       } else if (field === 'rss') {
         const kb = Number(value)
-        workingSetBytes = Number.isFinite(kb) && kb > 0 ? kb * 1024 : 0
+        if (Number.isFinite(kb) && kb > 0) workingSetBytes = kb * 1024
+        else if (!/^\d+$/.test(value) && stats) stats.unreadable += 1
       }
     })
     records.push({
       pid,
       parentPid,
-      name: fields.slice(layout.length).join(' ') || String(pid),
+      name: executableBaseName(fields.slice(layout.length).join(' ') || String(pid)),
       cpuSeconds,
       workingSetBytes,
     })
@@ -246,8 +301,20 @@ export class MacPsQuery implements ProcessQuery {
   /** 首选来源,不视为降级 */
   readonly degraded = false
 
+  /** 最近一次查询中布局字段不可解析的记录数(权限受限的进程表现为字段缺失) */
+  private unreadableCount = 0
+
+  /** 最近一次查询中布局字段不可解析的记录数 */
+  get unreadable(): number {
+    return this.unreadableCount
+  }
+
   async query(): Promise<ProcessRecord[]> {
-    return parsePsRecords(await runPs(['-axo', 'pid=,ppid=,time=,rss=,comm=']), ['pid', 'ppid', 'time', 'rss'])
+    const { text, pid } = await runPs(['-axo', 'pid=,ppid=,time=,rss=,comm='])
+    const stats = { unreadable: 0 }
+    const records = parsePsRecords(text, ['pid', 'ppid', 'time', 'rss'], stats)
+    this.unreadableCount = stats.unreadable
+    return dropSampler(records, pid)
   }
 }
 
@@ -257,7 +324,8 @@ export class MacPsSimpleQuery implements ProcessQuery {
   readonly degraded = true
 
   async query(): Promise<ProcessRecord[]> {
-    return parsePsRecords(await runPs(['-axo', 'pid=,rss=,comm=']), ['pid', 'rss'])
+    const { text, pid } = await runPs(['-axo', 'pid=,rss=,comm='])
+    return dropSampler(parsePsRecords(text, ['pid', 'rss']), pid)
   }
 }
 
@@ -297,8 +365,8 @@ export function resolvePlatformLabel(): string {
 
 /** 进程资源采集器 */
 export class ProcessCollector {
-  /** 逻辑处理器数量 */
-  private readonly cpuCount = cpus().length
+  /** 逻辑处理器数量(至少按 1 计,避免空列表导致 CPU 百分比成为非数) */
+  private readonly cpuCount = Math.max(1, cpus().length)
   /** 系统物理内存总量(字节) */
   private readonly totalMemoryBytes = totalmem()
   /** Agent 汇报句柄(按 pid 合并) */
@@ -307,6 +375,8 @@ export class ProcessCollector {
   private readonly lastCpu = new Map<number, number>()
   /** 最近一次采样时刻(epoch 毫秒) */
   private lastSampledAt = 0
+  /** 是否有采集轮询在执行中(查询慢于轮询间隔时跳过本轮,不并发重入) */
+  private polling = false
   /** 首份快照就绪的兑现器(产出首份快照时置空) */
   private firstSampleResolve: (() => void) | null = null
   /** 首份快照就绪信号:数据端点据此等待,避免先返回占位快照 */
@@ -332,13 +402,21 @@ export class ProcessCollector {
     private readonly onReported: (handle: ProcessHandle) => void = () => {},
   ) {}
 
-  /** 执行一轮采集,失败不影响既有快照 */
+  /**
+   * 执行一轮采集,失败不影响既有快照。
+   * 采集期间不重入:平台查询慢于轮询间隔时跳过本轮,
+   * 避免查询进程层层叠加,也避免多轮差分基准交错。
+   */
   async poll(): Promise<void> {
+    if (this.polling) return
+    this.polling = true
     try {
       this.advance(await this.query.query())
       this.lastError = null
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error)
+    } finally {
+      this.polling = false
     }
   }
 
@@ -434,6 +512,9 @@ export class ProcessCollector {
     const othersMemoryPercent = memoryPercentOf(othersMemoryBytes)
     this.lastSampledAt = now
 
+    // 读到但无权读取的进程既不计入 dsh 集合,也不会计入「其他应用」,会使「空闲」偏高,
+    // 故与查询链降级一并标注,由面板显示为采集降级
+    const unreadableCount = this.query.unreadable ?? 0
     this.snapshot = {
       sampledAt: now,
       pollInterval: this.pollInterval,
@@ -441,7 +522,8 @@ export class ProcessCollector {
       totalMemoryBytes: this.totalMemoryBytes,
       rootPid: this.rootPid,
       platform: resolvePlatformLabel(),
-      degraded: this.query.degraded,
+      degraded: this.query.degraded || unreadableCount > 0,
+      unreadableCount,
       processes,
       totals: {
         othersCpuPercent,

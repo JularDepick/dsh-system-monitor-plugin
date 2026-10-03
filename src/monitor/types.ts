@@ -111,10 +111,12 @@ export interface MonitorSnapshot {
   totalMemoryBytes: number
   /** dsh 根进程标识 */
   rootPid: number
-  /** 采集器运行平台(process.platform) */
+  /** 采集器运行平台的显示名(如 `Windows`,`macOS`,`Ubuntu 24.04.4 LTS`),非 `process.platform` 原值 */
   platform: string
-  /** 最近一次查询是否降级(数据来源非首选,如缺少父子关系) */
+  /** 最近一次查询是否降级(数据来源非首选,或存在读到但无权读取的进程) */
   degraded: boolean
+  /** 最近一次查询中读到但无权读取的进程数(平台无法判定时为 0;这些进程不计入任何一侧) */
+  unreadableCount: number
   /** 被监控进程的资源样本(进程树在前,汇报句柄在后) */
   processes: ResourceSample[]
   /** 整机口径合计(其他应用与空闲),占整机百分比 */

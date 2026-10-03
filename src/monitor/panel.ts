@@ -54,6 +54,7 @@ export class MonitorPanel {
       rootPid: 0,
       platform: '',
       degraded: false,
+      unreadableCount: 0,
       processes: [],
       // 占位合计:面板以 sampledAt 为 0 判为无有效数据,这里的数值不会被当作真实占用展示
       totals: {

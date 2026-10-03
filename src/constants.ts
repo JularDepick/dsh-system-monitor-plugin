@@ -21,6 +21,13 @@ export const TRANSLATION_DIR = 'src/translation'
 /** 资源采集轮询间隔默认值(毫秒) */
 export const DEFAULT_POLL_INTERVAL = 1000
 
+/**
+ * 资源采集轮询间隔下限(毫秒):
+ * 每轮采集在 Windows 与 macOS 上要派生一次查询进程,过小的间隔会让查询进程层层叠加,
+ * 故配置面给出下界,越界在插件加载期响亮失败
+ */
+export const MIN_POLL_INTERVAL = 250
+
 /** 泳道内名称显示开关的默认值(开启;由插件配置投影到面板载荷) */
 export const DEFAULT_LANE_NAMES = true
 
@@ -65,6 +72,13 @@ export const CLK_TCK_PROBE_TOLERANCE = 0.05
 
 /** 推算探测所需的最小开机时长(秒;过短则误差大,跳过推算) */
 export const CLK_TCK_PROBE_MIN_UPTIME_SECONDS = 60
+
+/**
+ * 时钟节拍缓存格式版本:
+ * 缓存一经写入会被长期复用,故推算口径或缓存结构变化时必须递增该值,
+ * 让旧缓存自动失效并重新探测(避免把历史错误值一直沿用下去)。
+ */
+export const CLK_TCK_CACHE_VERSION = 2
 
 /** 面板数据端点路径(host webserver 路由,浏览器端同源轮询) */
 export const MONITOR_DATA_PATH = '/api/system-monitor/snapshot'
