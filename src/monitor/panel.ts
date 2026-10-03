@@ -11,19 +11,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import { MONITOR_DATA_PATH, PANEL_FIRST_SAMPLE_WAIT_MS } from '../constants'
 import type { ProcessCollector } from './collector'
 import type { PanelOptions } from './types'
-import type { ToolWindow } from './tool-window'
 
 /** 面板数据提供器 */
 export class MonitorPanel {
   /**
    * 构造面板数据提供器
    * @param options 读取当前面板展示选项(来自插件配置,随配置改动实时生效)
-   * @param toolWindows 读取工具调用时间窗(会话事件流产物;随每次响应下发)
    */
   constructor(
     private readonly collector: ProcessCollector,
     private readonly options: () => PanelOptions,
-    private readonly toolWindows: () => ToolWindow[] = () => [],
   ) {}
 
   /** 注册面板数据路由(webServer 缺失时静默跳过) */
@@ -74,8 +71,8 @@ export class MonitorPanel {
       },
       error: this.collector.getLastError(),
     }
-    // 展示选项与工具调用时间窗随每次响应下发:设置页改动插件配置后,面板下一次轮询即按新选项渲染
-    const body = JSON.stringify({ ...payload, panelOptions: this.options(), toolWindows: this.toolWindows() })
+    // 展示选项随每次响应下发:设置页改动插件配置后,面板下一次轮询即按新选项渲染
+    const body = JSON.stringify({ ...payload, panelOptions: this.options() })
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(body)
   }

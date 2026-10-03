@@ -156,15 +156,6 @@ export const PANEL_HISTORY_HEIGHT = 40
 /** 短期趋势线上「高占用阈值」参考线的虚线间距(像素) */
 export const PANEL_HISTORY_DASH = 4
 
-/** 工具调用时间窗的留存条数(超出即丢最旧;只在内存中,不落盘) */
-export const TOOL_WINDOW_CAPACITY = 40
-
-/** 趋势线上工具调用标注的底色(半透明交互底色,明暗两套主题下都读作背景事件) */
-export const PANEL_TOOL_MARK_COLOR = 'var(--dsw-alias-interactive-bg-active, #2631481a)'
-
-/** 趋势线上工具调用标注的最小可见宽度(折线坐标系单位;短调用也留一条可见痕迹) */
-export const PANEL_TOOL_MARK_MIN_WIDTH = 0.6
-
 /**
  * 明细表可隐藏的可选列(名称列与 CPU 列恒显示:它们是识别行与判读占用的最小信息面)。
  * 取值同时用作本地偏好里的列标识,新增可选列时在此追加。
@@ -173,13 +164,6 @@ export const PANEL_TABLE_OPTIONAL_COLUMNS = ['pid', 'parent', 'session', 'memory
 
 /** 可隐藏列标识 */
 export type PanelTableColumn = (typeof PANEL_TABLE_OPTIONAL_COLUMNS)[number]
-
-/**
- * 维度卡标题行底色(浅灰,用于把标题行与卡片正文区分开):
- * 取滚动条底色档位,浅色主题落到 `--dsw-static-neutral-200`(#e5e5e5),深色主题落到中性深灰;
- * 悬停时在同一底色上叠一层半透明交互底色(见注入样式),明暗两套主题下都读得出可点。
- */
-export const PANEL_CARD_HEAD_COLOR = 'var(--dsw-alias-scrollbar-bg-l1, #e5e5e5)'
 
 /**
  * 列表行留存的默认轮数:某身份连续这么多轮没被采样到即从面板移除该行
@@ -194,8 +178,9 @@ export const MIN_RETAIN_ROUNDS = 5
 export const MAX_RETAIN_ROUNDS = 60
 
 /**
- * 百分比展示下限(单位:百分比):小于该值的读数显示为 `<0.01%` 而不是 `0.00%`,
- * 以免把「有占用但极小」与「确实为零」都读成零;恰为下限时按原值显示。
+ * 百分比展示下限(单位:百分比):低于该值且不为零的读数显示为 `<0.01%`,
+ * 确切为零的读数显示为 `0%`(真零是已知值,不能与「小于精度」混为一谈);
+ * 恰为下限时按原值显示。
  */
 export const PERCENT_DISPLAY_FLOOR = 0.01
 
@@ -226,10 +211,95 @@ export const PANEL_TYPOGRAPHY = {
   kpi: { fontSize: 'var(--dsw-font-l-20-font-size, 20px)', lineHeight: 'var(--dsw-font-l-20-line-height, 28px)', fontWeight: 600 },
 } as const
 
+/*
+ * 面板配色(统一继承当前 profile 的主题 token;明暗两套由宿主给出,面板不自绘颜色)
+ *
+ * 每项注释给出宿主主题的真实解析取值(浅色 / 深色),取自官方客户端产物内嵌的主题样式,
+ * 便于核对「继承自 profile」而不是凭印象选色;回退值只在宿主 token 缺失时兜底。
+ * 组织原则:
+ *   面 —— 由浅到深形成台阶:页底 → 卡片 → 标题行 → 占比条轨道(明暗两套各自成台阶);
+ *   字 —— 四档层级与宿主标签层级一一对应(主 / 次 / 三级 / 说明);
+ *   线 —— 两档:常规描边(卡片外框与行分隔)与强化描边(表头下边框与占比条外框);
+ *   彩 —— 强调色取宿主的信息 / 业务主色;分段色取宿主静态色序列;状态色取宿主状态档位。
+ */
+
+/** 面板页底与内嵌框底(趋势框、占比条内侧空隙) */
+export const PANEL_SURFACE_COLOR = 'var(--dsw-alias-bg-base, #fff)'
+
+/** 卡片面(统计卡与四张维度卡共用:浅色主题为浅灰面,深色主题为抬升面) */
+export const PANEL_CARD_COLOR = 'var(--dsw-alias-bg-module-platform, #f5f6f7)'
+
+/**
+ * 维度卡标题行底色(比卡片面深一档,用于区分标题与正文):
+ * 取滚动条底色二级档,浅色主题 #e5e5e5、深色主题 #545557 —— 深色主题下必须用这一档,
+ * 一级档(#3c3c3d)与卡片面(#353638)几乎同色,标题行会读不出分界。
+ */
+export const PANEL_CARD_HEAD_COLOR = 'var(--dsw-alias-scrollbar-bg-l2, #e5e5e5)'
+
+/** 占比条轨道底色(比标题行再深一档;三段泳道铺满,故只在圆角与边框内侧可见) */
+export const PANEL_SHARE_TRACK_COLOR = 'var(--dsw-alias-scrollbar-hover-l2, #d4d4d4)'
+
+/** 常规描边(卡片外框、行分隔):一级描边过淡(浅色主题仅 4% 黑,肉眼近乎不可见),故统一用二级 */
+export const PANEL_BORDER_COLOR = 'var(--dsw-alias-border-l2, #0000001a)'
+
+/** 强化描边(表头下边框、占比条外框) */
+export const PANEL_BORDER_STRONG_COLOR = 'var(--dsw-alias-border-l3, #0000001f)'
+
+/** 文字:主档(标题、KPI、数值) */
+export const PANEL_TEXT_PRIMARY_COLOR = 'var(--dsw-alias-label-primary, #0f1115)'
+
+/** 文字:次档(卡片标题、系统信息标签) */
+export const PANEL_TEXT_SECONDARY_COLOR = 'var(--dsw-alias-label-secondary, #61666b)'
+
+/** 文字:三级档(辅助说明、未采样行、装饰性提示、页脚) */
+export const PANEL_TEXT_TERTIARY_COLOR = 'var(--dsw-alias-label-tertiary, #81858c)'
+
+/**
+ * 强调色(主进程 / 宿主泳道、短期趋势线、单点圆点):
+ * 取宿主的信息 / 业务主色(浅 #4176e6,深 #7aaaff),随 profile 与明暗主题变化。
+ * 不用 `--dsw-alias-brand-primary`:该 token 在本设计系统里是黑白(浅 #0f1115 / 深 #f9fafb),
+ * 用作泳道与折线会与正文同色、读不出「主泳道」。
+ */
+export const PANEL_ACCENT_COLOR = 'var(--dsw-alias-state-business-primary, var(--dsw-alias-link, #4176e6))'
+
+/** 交互态叠加底色:悬停(半透明,压在各自底色上,故明暗两套都成立) */
+export const PANEL_HOVER_COLOR = 'var(--dsw-alias-interactive-bg-hover, #2631480f)'
+
+/** 交互态叠加底色:按下与背景标注(趋势线上的工具调用区间) */
+export const PANEL_ACTIVE_COLOR = 'var(--dsw-alias-interactive-bg-active, #2631481a)'
+
+/** 状态:正常(状态徽章、无高占用) */
+export const PANEL_STATE_OK_COLOR = 'var(--dsw-alias-state-success-primary, #22c55e)'
+
+/** 状态:警示文字(降级 / 数据源不可用徽章与提示文案) */
+export const PANEL_STATE_WARN_COLOR = 'var(--dsw-alias-state-warn-label, #dd8629)'
+
+/** 状态:警示底色(数据源不可用提示卡的底色) */
+export const PANEL_STATE_WARN_SURFACE_COLOR = 'var(--dsw-alias-state-warn-tertiary, #fef5e7)'
+
+/** 状态:错误(高占用数值高亮) */
+export const PANEL_STATE_ERROR_COLOR = 'var(--dsw-alias-state-error-primary, #ec1313)'
+
+/** 左端「其他应用」泳道底色(宿主静态中性色,明暗同值) */
+export const PANEL_OTHERS_COLOR = 'var(--dsw-static-neutral-400, #a2a4a6)'
+
+/** 右端「空闲」泳道底色(浅灰,与卡片面可辨) */
+export const PANEL_IDLE_COLOR = 'var(--dsw-alias-scrollbar-bg-l1, #e5e5e5)'
+
+/**
+ * 中段「无成员」占位底色(灰暗):
+ * 取遮罩档位,浅色主题为 24% 黑、深色主题为 50% 黑,故两套主题下都比空闲段更暗,
+ * 让「该维度暂无成员」一眼可辨(该占位同时带兜底悬停提示)。
+ */
+export const PANEL_SHARE_EMPTY_COLOR = 'var(--dsw-alias-bg-mask-1, #0000003d)'
+
+/** 占比条整体外边框颜色(与表头下边框同档:2px 灰色,明暗两套都清晰) */
+export const PANEL_SHARE_BAR_BORDER_COLOR = PANEL_BORDER_STRONG_COLOR
+
 /**
  * 资源占比堆叠条的分段配色(非主泳道成员按顺序循环取用)。
- * 全部取自宿主静态色 token(主题包提供,明暗主题下均可辨),回退值为对应静态色默认值;
- * 不含 deepseek 蓝色家族——品牌蓝固定留给主进程/宿主泳道(`PANEL_PRIMARY_COLOR`),避免混淆。
+ * 全部取自宿主静态色 token(明暗同值,故段内文字色的对比判定可按回退值进行);
+ * 不含蓝色家族 —— 强调蓝固定留给主进程 / 宿主泳道(`PANEL_ACCENT_COLOR`),避免与成员分段混淆。
  */
 export const PANEL_SERIES_COLORS = [
   'var(--dsw-static-amber-400, #f7ad31)',
@@ -241,31 +311,8 @@ export const PANEL_SERIES_COLORS = [
   'var(--dsw-static-neutral-400, #a2a4a6)',
 ]
 
-/** 主进程/宿主泳道的固定配色(取当前 profile 的品牌色 token;web 与 desktop 各自继承其主题) */
-export const PANEL_PRIMARY_COLOR = 'var(--dsw-alias-brand-primary, var(--dsw-static-deepseek-500, #4176e6))'
-
-/** 资源占比条轨道底色(静态面色 token,不用交互态 hover token) */
-export const PANEL_SHARE_TRACK_COLOR = 'var(--dsw-alias-bg-layer-2, var(--dsw-alias-interactive-bg-hover))'
-
-/**
- * 右端「空闲」泳道底色(浅灰,不用纯白):
- * 取滚动条底色档位,浅色主题落到 `--dsw-static-neutral-200`(#e5e5e5),深色主题落到中性深灰,
- * 故两套主题下都与卡片底色可辨,不会读成空白。
- */
-export const PANEL_IDLE_COLOR = 'var(--dsw-alias-scrollbar-bg-l1, #e5e5e5)'
-
-/**
- * 中段「无成员」占位底色(灰暗):
- * 取遮罩档位,浅色主题为 24% 黑、深色主题为 50% 黑,故两套主题下都比空闲段更暗,
- * 让「该维度暂无成员」一眼可辨(该占位同时带兜底悬停提示)。
- */
-export const PANEL_SHARE_EMPTY_COLOR = 'var(--dsw-alias-bg-mask-1, #0000003d)'
-
 /** 占比条整体外边框宽度(像素):2px,明暗主题下都清晰可辨 */
 export const PANEL_SHARE_BAR_BORDER_WIDTH = 2
-
-/** 占比条整体外边框颜色(灰色;取第三档描边色,浅色主题 12% 黑、深色主题 16% 白) */
-export const PANEL_SHARE_BAR_BORDER_COLOR = 'var(--dsw-alias-border-l3, #0000001f)'
 
 /** 资源占比堆叠条高度(像素;含 1px 外边框) */
 export const PANEL_SHARE_BAR_HEIGHT = 18
@@ -320,9 +367,6 @@ export const PANEL_SHARE_MEMBER_MIN_RATIO = 0.04
 /** 占比条右端(空闲)宽度比例 */
 export const PANEL_SHARE_IDLE_RATIO = 0.2
 
-/** 「其他应用」泳道配色(静态中性色,与 dsh 分段系列色区分) */
-export const PANEL_OTHERS_COLOR = 'var(--dsw-static-neutral-400)'
-
 /** 堆叠条段标签的字宽估算(像素,12px 等宽数字下约 7px/字符) */
 export const PANEL_SHARE_LABEL_CHAR_WIDTH = 7
 
@@ -370,3 +414,10 @@ export const PANEL_TABLE_SESSION_COUNT_WIDTH = 64
 
 /** 名称列最小宽度(像素;进程名/会话名很长时也保证可读) */
 export const PANEL_TABLE_NAME_MIN_WIDTH = 160
+
+/**
+ * 操作列(末尾的移除按钮列)固定宽度(像素):
+ * 该列**不参与**列宽的自动分配(既不按内容宽度挤满,也不分富余宽度),
+ * 故取「按钮 16px + 两侧单元格内边距 12px」再留 2px 余量,恒定 30px。
+ */
+export const PANEL_TABLE_ACTION_WIDTH = 30

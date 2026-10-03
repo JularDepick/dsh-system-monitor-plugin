@@ -8,7 +8,6 @@
 
 import type { CpuScope, PanelColumns } from '../constants'
 import type { HistoryPoint } from './history'
-import type { ToolWindow } from './tool-window'
 
 /** 进程句柄,用于标识一个可被监控的进程 */
 export interface ProcessHandle {
@@ -143,11 +142,6 @@ export interface MonitorSnapshot {
   history: HistoryPoint[]
   /** 面板展示选项(泳道内名称开关等;缺失时客户端按默认值处理) */
   panelOptions?: PanelOptions
-  /**
-   * 工具调用时间窗(由面板数据端点注入,不在采集器快照内;按开始时刻升序)。
-   * 面板据此在趋势线上标注工具调用区间;缺失时客户端不画标注。
-   */
-  toolWindows?: ToolWindow[]
   /**
    * 无采样时的失败原因(仅数据端点在采集器尚未产出快照时携带)。
    * 携带该项即表示 `sampledAt` 为 0、其余指标均为占位值,面板不得当作有效数据展示。

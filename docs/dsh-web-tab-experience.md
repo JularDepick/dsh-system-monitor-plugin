@@ -120,6 +120,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
 9. **数据端点返回 200 不等于有数据**:自定义数据路由在"暂无数据"时若返回 200 + 占位结构,客户端必须按字段是否有效判定(如采样时刻为 0),否则会把占位值当真实数据渲染
 10. **注入面板的无障碍要自己补齐**:宿主不会替你补键盘与读屏语义。实测有效的做法:折叠开关用原生 `<button>` 并带 `aria-expanded`;面板内子页(替换式配置页)加 `role="region"` 与名称,入口按钮带 `aria-expanded` 与 `aria-controls`,展开时把焦点移入子页(`tabIndex={-1}` + `focus()`),收起时(含 ESC)把焦点还给入口按钮,否则焦点会落在已卸载的节点上;状态类信息另给一个 `role="status"` + `aria-live="polite"` 的仅读屏文本(用 `clip-path: inset(50%)` 之类做视觉隐藏,不要用 `display:none`);纯装饰的色块与图标加 `aria-hidden`;错误提示卡用 `role="alert"`;表头用 `<th scope="col">`;骨架动画在 `prefers-reduced-motion: reduce` 下关闭
 11. **列可隐藏时表头与行单元必须同源取舍**:动态列宽的表格用 `colgroup` 定列,隐藏某一列时若只改表头不改行单元(或反之),列数错位会直接错行;把可隐藏列抽成一份清单,表头构造与行构造都按同一份清单取舍,跨列表头(如"内存"占两列)的 `colSpan` 也要随之在 1 与 2 之间切换
+12. **配色要按宿主真实取值挑 token,不能按名字猜**:宿主主题样式是 `body{…}`(浅色)与 `body[data-ds-dark-theme]{…}`(深色)两套声明,把 token 解析成具体颜色后再选,能避开几个必然踩到的坑 —— `--dsw-alias-bg-layer-1/2/3` 在浅色主题下**同为 `#fff`**(拿它当卡片面等于没有层次,卡片面应取 `--dsw-alias-bg-module-platform`),`--dsw-alias-brand-primary` 在本设计系统里是**黑白**(浅 `#0f1115` / 深 `#f9fafb`,当强调色会与正文同色,强调色应取 `--dsw-alias-state-business-primary`),`--dsw-alias-border-l1` 浅色主题只有 4% 黑(1px 描边肉眼近乎不可见,描边从二级起用),`--dsw-alias-label-caption` 压在浅灰面上对比度不足 3(压在灰面上的文字用三级或次档);另外深色主题的相邻面色容易过近(如 `scrollbar-bg-l1` `#3c3c3d` 与卡片面 `#353638` 只差 0.008 亮度),深色下要挑开一档(`scrollbar-bg-l2` `#545557`);建议把「面色台阶单调 + 关键文字/描边对比度达标」写成脚本按真实取值逐项断言,比肉眼可靠
 
 ## 五,参考文件索引(官方仓库)
 

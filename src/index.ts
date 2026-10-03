@@ -28,8 +28,8 @@ export { parseSessionIdFromEnviron, terminalAncestor } from './monitor/attributi
 export { SampleHistory, historyPolyline, historySummary } from './monitor/history'
 export { RowRetention } from './monitor/retention'
 export { formatPercent } from './monitor/format'
-export { ToolWindowLog, toolWindowMarks } from './monitor/tool-window'
 export { sortRows, normalizeTableSort } from './monitor/table-sort'
+export { layoutColumnWidths, distributeColumnWidths } from './monitor/table-layout'
 export type {
   MonitorSnapshot,
   ProcessHandle,
