@@ -41,8 +41,30 @@ export const REPORT_TOOL_NAME = 'system_monitor_report'
 /** 系统进程查询超时(毫秒) */
 export const QUERY_TIMEOUT_MS = 10000
 
-/** Linux 时钟节拍(/proc stat 时间字段单位,标准 USER_HZ) */
+/**
+ * Linux 时钟节拍兜底值(/proc 时间字段单位,标准 USER_HZ):
+ * 首次运行时会探测真实值并缓存(见 monitor/clock-ticks.ts),
+ * 探测不可信或非 Linux 平台时用该值。
+ */
 export const LINUX_CLK_TCK = 100
+
+/** 时钟节拍缓存目录(相对 DSH_HOME;插件自管状态文件,不进插件 Config schema) */
+export const ENV_CACHE_DIR = 'system-monitor-plugin'
+
+/** 时钟节拍缓存文件名 */
+export const ENV_CACHE_FILE = 'env.json'
+
+/** 时钟节拍可信下限(正整数刻度) */
+export const CLK_TCK_MIN = 1
+
+/** 时钟节拍可信上限(超出即视为探测异常) */
+export const CLK_TCK_MAX = 10000
+
+/** 两种探测法的相对偏差上限(超出则采信由 /proc 推算的值) */
+export const CLK_TCK_PROBE_TOLERANCE = 0.05
+
+/** 推算探测所需的最小开机时长(秒;过短则误差大,跳过推算) */
+export const CLK_TCK_PROBE_MIN_UPTIME_SECONDS = 60
 
 /** 面板数据端点路径(host webserver 路由,浏览器端同源轮询) */
 export const MONITOR_DATA_PATH = '/api/system-monitor/snapshot'

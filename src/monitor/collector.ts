@@ -3,7 +3,7 @@
  *
  * 按轮询间隔采集 dsh 进程树与 Agent 已汇报句柄的资源占用:
  * Windows 经 PowerShell 查询系统进程快照(CIM 为主,Get-Process 为降级),
- * Linux(含 WSL)经 /proc 文件系统读取;
+ * Linux(含 WSL)经 /proc 文件系统读取,macOS 经 ps 读取;
  * CPU 占用率以相邻两次采样的累计 CPU 时间差分计算,
  * 内存换算为 GB 与系统总量百分比。
  * 数据仅供 UI 面板展示,不暴露给 dsh 使用。
@@ -16,6 +16,8 @@ import { cpus, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
+
+import { resolveClkTck } from './clock-ticks'
 
 /** 系统进程查询器接口(便于注入假实现测试) */
 export interface ProcessQuery {
@@ -120,8 +122,8 @@ export class LinuxProcQuery implements ProcessQuery {
   /** 首选来源,不视为降级 */
   readonly degraded = false
 
-  /** 构造 Linux 查询器 */
-  constructor(private readonly root = '/proc') {}
+  /** 构造 Linux 查询器:时钟节拍默认走探测与缓存(非 Linux 或探测不可信时为常量兜底) */
+  constructor(private readonly root = '/proc', private readonly clkTck: number = resolveClkTck(root)) {}
 
   async query(): Promise<ProcessRecord[]> {
     const records: ProcessRecord[] = []
@@ -154,7 +156,7 @@ export class LinuxProcQuery implements ProcessQuery {
       pid,
       parentPid: Number.isInteger(parentPid) ? parentPid : null,
       name: stat.slice(nameStart + 1, nameEnd).trim() || String(pid),
-      cpuSeconds: ((Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0)) / LINUX_CLK_TCK,
+      cpuSeconds: ((Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0)) / this.clkTck,
       workingSetBytes: rssMatch ? Number(rssMatch[1]) * 1024 : 0,
     }
   }
@@ -173,13 +175,100 @@ class UnsupportedQuery implements ProcessQuery {
   }
 }
 
-/** 按运行时平台创建查询链:Windows 用 PowerShell 回退链,Linux(含 WSL)用 /proc,其余平台占位 */
+/** 执行 ps 并返回输出文本(macOS 采集) */
+function runPs(args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'ps',
+      [...args],
+      { timeout: QUERY_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
+      (error, stdout) => {
+        if (error) reject(error)
+        else resolve(stdout)
+      },
+    )
+  })
+}
+
+/** 解析 ps 的累计 CPU 时间字段([[dd-]hh:]mm:ss)为秒 */
+function parseCpuSeconds(text: string): number {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(text.trim())
+  if (match === null) return 0
+  const days = Number(match[1] ?? 0)
+  const hours = Number(match[2] ?? 0)
+  const minutes = Number(match[3] ?? 0)
+  const seconds = Number(match[4] ?? 0)
+  return days * 86400 + hours * 3600 + minutes * 60 + seconds
+}
+
+/**
+ * 解析 macOS ps 输出:字段顺序由调用方给定,名称固定放在最后
+ * (进程名可能含空格,故按字段数切开、余下整段作为名称)。
+ */
+function parsePsRecords(text: string, layout: readonly ('pid' | 'ppid' | 'time' | 'rss')[]): ProcessRecord[] {
+  const records: ProcessRecord[] = []
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    const fields = trimmed.split(/\s+/, layout.length + 1)
+    if (fields.length <= layout.length) continue
+    const pid = Number(fields[0])
+    if (!Number.isInteger(pid) || pid <= 0) continue
+    let parentPid: number | null = null
+    let cpuSeconds = 0
+    let workingSetBytes = 0
+    layout.forEach((field, index) => {
+      const value = fields[index]
+      if (field === 'ppid') {
+        const parsed = Number(value)
+        parentPid = Number.isInteger(parsed) && parsed > 0 ? parsed : null
+      } else if (field === 'time') {
+        cpuSeconds = parseCpuSeconds(value)
+      } else if (field === 'rss') {
+        const kb = Number(value)
+        workingSetBytes = Number.isFinite(kb) && kb > 0 ? kb * 1024 : 0
+      }
+    })
+    records.push({
+      pid,
+      parentPid,
+      name: fields[layout.length].trim() || String(pid),
+      cpuSeconds,
+      workingSetBytes,
+    })
+  }
+  return records
+}
+
+/** macOS 查询:ps 全量进程(含父子关系、累计 CPU 时间与常驻内存) */
+export class MacPsQuery implements ProcessQuery {
+  /** 首选来源,不视为降级 */
+  readonly degraded = false
+
+  async query(): Promise<ProcessRecord[]> {
+    return parsePsRecords(await runPs(['-axo', 'pid=,ppid=,time=,rss=,comm=']), ['pid', 'ppid', 'time', 'rss'])
+  }
+}
+
+/** macOS 降级查询:ps 去父子关系与累计 CPU 时间(父进程置空、CPU 时间置零,由回退链标注降级) */
+export class MacPsSimpleQuery implements ProcessQuery {
+  /** 独立使用时即降级来源 */
+  readonly degraded = true
+
+  async query(): Promise<ProcessRecord[]> {
+    return parsePsRecords(await runPs(['-axo', 'pid=,rss=,comm=']), ['pid', 'rss'])
+  }
+}
+
+/** 按运行时平台创建查询链:Windows 用 PowerShell 回退链,Linux(含 WSL)用 /proc,macOS 用 ps,其余平台占位 */
 export function createPlatformQuery(): ProcessQuery {
   switch (process.platform) {
     case 'win32':
       return new FallbackProcessQuery([new CimProcessQuery(), new GetProcessQuery()])
     case 'linux':
       return new LinuxProcQuery()
+    case 'darwin':
+      return new FallbackProcessQuery([new MacPsQuery(), new MacPsSimpleQuery()])
     default:
       return new UnsupportedQuery(process.platform)
   }

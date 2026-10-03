@@ -276,7 +276,7 @@ dsh-system-monitor-plugin/
 │   ├── monitor/                # 系统监控模块
 │   │   ├── index.ts            # 模块装配
 │   │   ├── types.ts            # 进程句柄、资源样本、快照与回执类型
-│   │   ├── collector.ts        # 进程资源采集器(平台查询链:Windows CIM/降级、Linux /proc;CPU 差分)
+│   │   ├── collector.ts        # 进程资源采集器(平台查询链:Windows CIM/降级、Linux /proc、macOS ps/降级;CPU 差分)
 │   │   ├── reporter.ts         # 进程句柄汇报工具
 │   │   └── panel.ts            # 面板数据提供(host webserver 数据端点)
 │   ├── client/                 # 客户端插件
@@ -416,7 +416,7 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - WSL 部署测试经验见 `.agents/wsl-deploy-testing.md`(部署步骤、服务端/浏览器端验证清单、常见问题排查、0.2.0-rc.2 待复验点;实机测试由人工完成,复验结论回写该文件与 NEXT_SESSION.md);
 - 客户端面契约:包 `exports` 必须含 `"./package.json"`;client bundle 的 `module`/`exports` 定义须并入 banner(tsdown 0.22 无 intro);
 - WSL 发布版部署:客户端面托管以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web`(0.1.5-rc.1 实测该方案托管正常,不带 NODE_PATH 未复核;0.1.7-rc.2 与 0.2.0-rc.2 按发布包静态核对机制未变,待实机复验);0.2.0-rc.2 客户端托管 URL 仍为批量格式 `/plugins/??<包名>/client.js&rev=...`(旧单包路径 404)、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌);开发迭代用直接部署工作流(复制 `dist/`、`package.json`、`cordis.patch.yml` 覆盖 profile 包目录);tarball 分发取 `release/`;
-- 未完成事项:`v0.1.2`(适配 dsh 0.2.0-rc.2)的依赖安装仍受 pnpm 12.6.0 机器级 store 操作锁的沙箱限制阻塞(`pnpm install`/`pnpm run <script>` 均会先触发依赖校验安装),已按绕过路径完成验证:直接跑 `node node_modules/typescript/bin/tsc --noEmit` 类型检查、`node scripts/clean-release.cjs` + `node node_modules/tsdown/dist/run.mjs` 构建、`node .agents/smoke-0.2.0-rc2.mjs` 冒烟全通过;`pnpm pack` 与实机复验仍未执行(`release/` 当前为空,旧 v0.1.1 包已备份到 `temp/release-backup/`);macOS 平台适配(见 `docs/v1.0.0-前驱版本待办排期清单.md`,未实施);Linux(含 WSL)采集已实现。
+- 未完成事项:`v0.1.2`(适配 dsh 0.2.0-rc.2)的依赖安装仍受 pnpm 12.6.0 机器级 store 操作锁的沙箱限制阻塞(`pnpm install`/`pnpm run <script>` 均会先触发依赖校验安装),已按绕过路径完成验证:直接跑 `node node_modules/typescript/bin/tsc --noEmit` 类型检查、`node scripts/clean-release.cjs` + `node node_modules/tsdown/dist/run.mjs` 构建、`node .agents/smoke-0.2.0-rc2.mjs` 冒烟全通过;`pnpm pack` 与实机复验仍未执行(`release/` 当前为空,旧 v0.1.1 包已备份到 `temp/release-backup/`);macOS 采集已实现(`ps -axo pid=,ppid=,time=,rss=,comm=`,失败降级为 `ps -axo pid=,rss=,comm=` 即无父子关系且 CPU 时间置零,窗口文案随之标降级);Linux(含 WSL)采集已实现。
 
 ### 开发经验
 

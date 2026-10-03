@@ -23,6 +23,8 @@ A plugin for dsh: monitor the resource utilization of dsh system processes and r
 
 This release targets dsh 0.2.0-rc.2. Since dsh 0.2.0-rc.2, dsh enforces the dsh-prefixed `peerDependencies` of a plugin (a mismatched plugin is refused both at installation and at startup), so the plugin version must be installed against the matching dsh version.
 
+This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical.
+
 Install this plugin into a dsh profile:
 
 ```sh
@@ -39,7 +41,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin-0.1.2.tgz
 
 After installation and startup, the plugin provides a "System Monitor" tab in the session-area tab bar of the Web UI, showing CPU usage and memory usage (auto-scaled KB/MB/GB and percentage) of monitored processes across three areas: this session's processes, all processes, and sessions. Resource share is drawn as three fixed lanes — others, DSH and its subprocesses (segmented per member), and idle — each labelled with its percentage of the whole machine, with the process/session name shown inside a segment whenever it fits (the "Settings" button at the top right of the panel toggles this and selects a single-column or two-column view, and the sub-page closes with ESC; each area title collapses or expands its content). Process handles that need to be monitored are reported by the Agent through the reporting tool during a session.
 
-The format specification of the process reporting mechanism is documented in [Process Reporting Mechanism and Specification](docs/v0.1.0-进程汇报机制与规范.md) (Chinese).
+The handle fields of the reporting mechanism (identity, parent process, process name, session id, and the like) and the deduplication rules are documented in the reporting tool's parameter description inside the plugin.
 
 ## Related Links
 
