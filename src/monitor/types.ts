@@ -66,6 +66,11 @@ export interface MonitorSnapshot {
   degraded: boolean
   /** 被监控进程的资源样本(进程树在前,汇报句柄在后) */
   processes: ResourceSample[]
+  /**
+   * 无采样时的失败原因(仅数据端点在采集器尚未产出快照时携带)。
+   * 携带该项即表示 `sampledAt` 为 0、其余指标均为占位值,面板不得当作有效数据展示。
+   */
+  error?: string
 }
 
 /** 汇报工具回执 */

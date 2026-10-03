@@ -115,6 +115,9 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
 4. **CSS Modules 需要 lightningcss**:tsdown 不内置该管线,官方用自定义插件(虚拟 id + lightningcss transform);不想要 CSS 文件时可用内联样式规避
 5. **样式纪律**:使用 `--dsw-alias-*` 语义 token,不写死颜色;产品文案用界面语言;表格/select 文本居中;不用浏览器原生弹窗
 6. **pnpm 无 TTY 会 abort**:package.json 描述符变更后需 `CI=true pnpm install`;typecheck/build 也建议 `CI=true` 前缀
+7. **文案跟随界面语言必须走宿主 locale 服务**:按 `navigator.language` 判定只跟浏览器语言走,与 dsh 界面语言不一致(用户在设置页切换语言时插件文案不跟着变)。正确做法:字典以命名空间注册(`ctx.locale.register(ns, { zh, en })`,内置语言 id 只有 `zh`/`en`),并在槽注册时声明 `locale: ns`,框架据此向组件注入译文函数、语言切换时重建该座位;`label` 用 `ctx.locale.bind(ns)` 的 thunk 即可跟随语言。声明了 `locale` 却不注册字典会在渲染期响亮失败。`ctx.locale` 的类型家在 `@deepseek-ai/dsh-client-locale`(只承载类型,不必作为运行时依赖)
+8. **注册的 inline 行高必须带单位**:React 内联样式的 `lineHeight` 属无单位属性,数值会被原样输出为"倍数 × font-size"(`lineHeight: 20` 在 13px 字号下是 260px),组件会因此被撑出大片空白;写 `'20px'` 这类带单位字符串。复刻渲染台验证时也要保持同一数值语义,否则渲染台"通过"而真实页面崩坏
+9. **数据端点返回 200 不等于有数据**:自定义数据路由在"暂无数据"时若返回 200 + 占位结构,客户端必须按字段是否有效判定(如采样时刻为 0),否则会把占位值当真实数据渲染
 
 ## 五、参考文件索引(官方仓库)
 
@@ -135,4 +138,4 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
 | `docs/web-styling.md` | 样式 token 与组件规则 |
 | `packages/host/webserver/src/index.ts` | webserver 服务(register 路由扩展点) |
 
-> 本项目实例:dsh-system-monitor-plugin 在会话区域注册「系统监控」标签页(conversation.view 槽,id `system-monitor`,order 30),数据通道走 host webserver 路由(`/api/system-monitor/snapshot`),tab 标签文案随界面语言切换;相关项目细节见根目录 `AGENTS.md` 设计细节段。
+> 本项目实例:dsh-system-monitor-plugin 在会话区域注册「系统监控」标签页(conversation.view 槽,id `system-monitor`,order 30),数据通道走 host webserver 路由(`/api/system-monitor/snapshot`),面板字典以 `system-monitor` 命名空间注册进宿主 locale 服务并声明在槽注册上,tab 标签与面板文案随界面语言切换;相关项目细节见根目录 `AGENTS.md` 设计细节段。

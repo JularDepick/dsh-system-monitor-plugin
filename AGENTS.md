@@ -230,7 +230,7 @@
 
 ### 概述
 
-dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用。插件自主采集 dsh 进程树的 CPU 占用率与内存占用(GB、百分比);Agent 通过汇报工具主动上报插件无法自主识别的进程句柄(subagent 等);监控数据仅在插件 UI 面板展示,不暴露给 dsh 使用。
+dsh-system-monitor-plugin:监控 dsh 进程及其派生子进程的资源占用。插件自主采集 dsh 进程树的 CPU 占用率与内存占用(按量级自适应 KB/MB/GB、百分比);Agent 通过汇报工具主动上报插件无法自主识别的进程句柄(subagent 等);监控数据仅在插件 UI 面板展示,不暴露给 dsh 使用。
 
 - 插件命名遵循 `dsh-<核心名称>-plugin` 规范,核心名称 `system-monitor`;
 - 项目文档语言核心为中文:主 README 为 `README.md`(中文),英文为额外文档 `README_en-US.md`;
@@ -345,8 +345,10 @@ dsh-system-monitor-plugin/
 - 汇报工具名称:`system_monitor_report`;入参进程句柄结构遵循 `docs/v0.1.0-进程汇报机制与规范.md`
 - 系统进程查询超时:10000 毫秒;Linux 时钟节拍:100(`LINUX_CLK_TCK`)
 - 操作系统识别:快照平台字段为运行平台显示名,Linux 经 `/etc/os-release` 识别发行版与版本(如 Ubuntu 24.04.4 LTS),不做宿主机穿透识别
-- 面板形态:会话区域标签栏「系统监控」tab(客户端半身,`conversation.view` 槽,id `system-monitor`,排序 30,标签文案跟随界面语言);数据经 host webserver 端点 `/api/system-monitor/snapshot` 同源轮询(1000 毫秒);UI 对齐 dsh web 原版风格:内容列宽复用宿主 `--dsh-chat-content-width` 等变量与 `--dsw-alias-*` 语义 token,统计卡 KPI、官方 `StateDot` 状态徽章(正常/降级)、meter 占用进度条、高占用警示(阈值 90)、骨架屏与空/错误态;页脚项目与作者超链接随常量可替换
-- 面板容器契约(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致):宿主视图区与滚动容器均无内边距、槽锚点为 `display:contents`,故面板自带内边距(`PANEL_TOP_PADDING`/`PANEL_BOTTOM_PADDING`/`PANEL_COLUMN_GUTTER`,`max-width` 为内容列宽加两侧 gutter 以保持内容宽度与宿主对话列一致);面板根为纵向 flex 滚动容器(`flex:0 1 auto; min-height:0; overflow-y:auto`),并在注入样式中用 `.sm-column > * { flex: none; }` 锁死直接子块不参与压缩(卡片带 `overflow:hidden` 时 flex 自动最小尺寸为 0,会被压扁并裁掉内容);进度条容器用块级 flex 且数值槽固定宽度(`PANEL_CPU_VALUE_WIDTH`/`PANEL_MEMORY_VALUE_WIDTH`),避免行内级 flex 基线退化导致的行高撑高与逐行漂移;审计与实测记录见 `temp/ui-audit/`
+- 面板形态:会话区域标签栏「系统监控」tab(客户端半身,`conversation.view` 槽,id `system-monitor`,排序 30,标签文案跟随界面语言);数据经 host webserver 端点 `/api/system-monitor/snapshot` 同源轮询(1000 毫秒);UI 对齐 dsh web 原版风格:内容列宽复用宿主 `--dsh-chat-content-width` 等变量,颜色只用 `--dsw-alias-*` 语义 token 与 `--dsw-static-*` 静态色 token,排版取宿主字号 token(`PANEL_TYPOGRAPHY`,基准 s-14 14px/22px,随宿主「内容字号」设置);组成:统计卡 KPI、官方 `StateDot` 状态徽章(正常/降级/数据源不可用)、资源占比卡(CPU 与内存各一条统一堆叠条,按进程分段配色、段内 `title` 提示、右侧合计)、进程表(名称前配色块作图例、固定列宽、超长名省略号)、高占用警示(阈值 90)、骨架屏与空/错误态;内存按量级自适应 KB/MB/GB,百分比一律精确到 0.01%;页脚项目与作者超链接随常量可替换
+- 面板文案本地化:字典以 `PANEL_LOCALE_NAMESPACE` 命名空间注册进宿主 locale 服务(`ctx.locale.register`),`conversation.view` 注册声明同一命名空间以取得框架注入的 `t` 座位,标签 thunk 与面板文案因此跟随 dsh 界面语言(禁用浏览器 `navigator.language` 判定;宿主语言 id 为 `zh`/`en`,字典键集与 `src/translation/*.ini` 双向一致)
+- 面板数据有效性:采集器产出首份快照前,数据端点返回 200 + 占位快照(`sampledAt` 为 0、`error` 记失败原因);面板以"存在采样"为准,占位响应与轮询失败一律按数据源不可用处理(否则会渲染出 1970 年采样时间与全 0 指标);轮询失败但已有旧快照时,统计卡状态徽章改示「数据源不可用」
+- 面板容器契约(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致):宿主视图区与滚动容器均无内边距、槽锚点为 `display:contents`,故面板自带内边距(`PANEL_TOP_PADDING`/`PANEL_BOTTOM_PADDING`/`PANEL_COLUMN_GUTTER`,`max-width` 为内容列宽加两侧 gutter 以保持内容宽度与宿主对话列一致);面板根为纵向 flex 滚动容器(`flex:0 1 auto; min-height:0; overflow-y:auto`),并在注入样式中用 `.sm-column > * { flex: none; }` 锁死直接子块不参与压缩(卡片带 `overflow:hidden` 时 flex 自动最小尺寸为 0,会被压扁并裁掉内容);资源占比条为整条堆叠条(每进程一段 `flexGrow` 表达占比,余量段承担未占满部分,合计超 100% 时按比例缩放不溢出),进程表用固定列宽策略(`table-layout:fixed` + `colgroup`,PID/父进程/CPU/内存列宽分别为 `PANEL_TABLE_PID_WIDTH`/`PANEL_TABLE_PARENT_WIDTH`/`PANEL_TABLE_CPU_WIDTH`/`PANEL_TABLE_MEMORY_WIDTH`),进程名列取剩余宽度并以省略号截断(超长名称不再挤压其它列、不再撑高行);审计与实测记录见 `temp/ui-audit/`
 - 宿主版本兼容性(dsh 0.2.0-rc.2 起强制):宿主只读插件 `peerDependencies` 中 `@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-*` 前缀的项,按 `semver.satisfies(运行时版本, 范围, {includePrerelease:true})` 判定;不兼容时 `dsh plugin add` 抛 `incompatible-version`(退出码 1),profile 装载前该行被置 `disabled` 并打印禁用原因。`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 不参与判定。豁免走 profile 目录的 `compatibility.json`(`dsh plugin allow-version`,授予需 `--accept-risk`)。本项目因此把 `@deepseek-ai/dsh-tools` 的 peer 精确绑定目标 dsh 版本,`engines.dsh` 仅为声明性元数据(已决策不声明)
 - 编译产物:`dist/index.mjs` 与 `dist/index.d.mts`(服务端)、`dist/client.js`(客户端,固定名);pack tarball 归位 `release/`(build 前置清空 release 旧包,postpack 归位新包);`package.json` 的 `main`/`types` 与真实产物对齐
 - 版本控制与分发边界:`dist/` 与 `release/` 均为构建生成物,不入版本控制;对外分发走 GitHub Release 附 tarball(包内已含 `dist/`)。后果:固定提交中不含运行产物,DSH STORE 一类的固定源自动检查会判为"运行产物缺失"并因此无法自动收录,属有意取舍,不以追踪构建产物换取收录
@@ -356,7 +358,7 @@ dsh-system-monitor-plugin/
 - 文档语言核心:中文(`README.md` 为中文主 README,英文为额外文档)
 - 翻译/加载行为:未命中回退默认语言,文件缺失回退空表由主逻辑兜底
 - 维护规则:按需核对 `docs/dsh-dev-docs/<版本>/` 与官方仓库 `docs/user/develop` 是否过时,过时则按官方收录流程更新到新版本目录
-- 全局常量索引(文件路径与名称):`src/constants.ts` — `PLUGIN_NAME`、`DEFAULT_LANGUAGE`、`FALLBACK_LANGUAGE`、`TRANSLATION_DIR`、`DEFAULT_POLL_INTERVAL`、`REPORT_TOOL_NAME`、`QUERY_TIMEOUT_MS`、`LINUX_CLK_TCK`、`MONITOR_DATA_PATH`、`CLIENT_POLL_INTERVAL`、`PANEL_TAB_ID`、`PANEL_TAB_ORDER`、`PANEL_AUTHOR`、`PANEL_AUTHOR_URL`、`PANEL_PROJECT_URL`、`PANEL_HIGH_LOAD_THRESHOLD`、`PANEL_COLUMN_GUTTER`、`PANEL_TOP_PADDING`、`PANEL_BOTTOM_PADDING`、`PANEL_STACK_GAP`、`PANEL_CPU_VALUE_WIDTH`、`PANEL_MEMORY_VALUE_WIDTH`
+- 全局常量索引(文件路径与名称):`src/constants.ts` — `PLUGIN_NAME`、`DEFAULT_LANGUAGE`、`FALLBACK_LANGUAGE`、`TRANSLATION_DIR`、`DEFAULT_POLL_INTERVAL`、`REPORT_TOOL_NAME`、`QUERY_TIMEOUT_MS`、`LINUX_CLK_TCK`、`MONITOR_DATA_PATH`、`CLIENT_POLL_INTERVAL`、`PANEL_TAB_ID`、`PANEL_TAB_ORDER`、`PANEL_LOCALE_NAMESPACE`、`PANEL_AUTHOR`、`PANEL_AUTHOR_URL`、`PANEL_PROJECT_URL`、`PANEL_HIGH_LOAD_THRESHOLD`、`PANEL_COLUMN_GUTTER`、`PANEL_TOP_PADDING`、`PANEL_BOTTOM_PADDING`、`PANEL_STACK_GAP`、`PANEL_TYPOGRAPHY`、`PANEL_SERIES_COLORS`、`PANEL_SHARE_BAR_HEIGHT`、`PANEL_CHART_LABEL_WIDTH`、`PANEL_TOTAL_VALUE_WIDTH`、`PANEL_SWATCH_SIZE`、`PANEL_CELL_PADDING_X`、`PANEL_TABLE_PID_WIDTH`、`PANEL_TABLE_PARENT_WIDTH`、`PANEL_TABLE_CPU_WIDTH`、`PANEL_TABLE_MEMORY_WIDTH`
 
 > 主要指可个性化修改但不影响项目核心功能的设计细节,某个项第一次使用时一般需要取默认值方便开发者知悉和维护,具体包括但不限于:
 >
@@ -411,7 +413,7 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - WSL 部署测试经验见 `.agents/wsl-deploy-testing.md`(部署步骤、服务端/浏览器端验证清单、常见问题排查、0.2.0-rc.2 待复验点;实机测试由人工完成,复验结论回写该文件与 NEXT_SESSION.md);
 - 客户端面契约:包 `exports` 必须含 `"./package.json"`;client bundle 的 `module`/`exports` 定义须并入 banner(tsdown 0.22 无 intro);
 - WSL 发布版部署:客户端面托管以 `NODE_PATH=<profile>/node_modules` 启动 `dsh web`(0.1.5-rc.1 实测该方案托管正常,不带 NODE_PATH 未复核;0.1.7-rc.2 与 0.2.0-rc.2 按发布包静态核对机制未变,待实机复验);0.2.0-rc.2 客户端托管 URL 仍为批量格式 `/plugins/??<包名>/client.js&rev=...`(旧单包路径 404)、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌);开发迭代用直接部署工作流(复制 `dist/`、`package.json`、`cordis.patch.yml` 覆盖 profile 包目录);tarball 分发取 `release/`;
-- 未完成事项:`v0.1.2`(适配 dsh 0.2.0-rc.2)的依赖安装受 pnpm 12.6.0 机器级 store 操作锁的沙箱限制阻塞,故 typecheck/build/pack 与实机复验全部未执行,已只做语法验证(`scripts/syntax-check.mjs`,只解析不构建);macOS 平台适配(见 `docs/v1.0.0-前驱版本待办排期清单.md`,未实施);Linux(含 WSL)采集已实现。
+- 未完成事项:`v0.1.2`(适配 dsh 0.2.0-rc.2)的依赖安装仍受 pnpm 12.6.0 机器级 store 操作锁的沙箱限制阻塞(`pnpm install`/`pnpm run <script>` 均会先触发依赖校验安装),已按绕过路径完成验证:直接跑 `node node_modules/typescript/bin/tsc --noEmit` 类型检查、`node scripts/clean-release.cjs` + `node node_modules/tsdown/dist/run.mjs` 构建、`node .agents/smoke-0.2.0-rc2.mjs` 冒烟全通过;`pnpm pack` 与实机复验仍未执行(`release/` 当前为空,旧 v0.1.1 包已备份到 `temp/release-backup/`);macOS 平台适配(见 `docs/v1.0.0-前驱版本待办排期清单.md`,未实施);Linux(含 WSL)采集已实现。
 
 ### 开发经验
 
@@ -429,6 +431,8 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - 客户端发包契约:`exports` 必须含 `"./package.json"`(宿主 client-modules 用 `require.resolve('<包名>/package.json')` 定位,缺此导出会被 exports 拦截拒绝);
 - client bundle 包装:tsdown 0.22 无 `intro` 选项(静默忽略),`module`/`exports` 定义必须并入 `banner`(否则浏览器端执行时 `exports is not defined` 导致插件加载失败);
 - 客户端 UI 组件:官方平台 seed 包 `@deepseek-ai/dsh-client-ui-primitives`(StateDot/Pill/Button 等)可直接 value-import(构建时外部化,运行时由宿主提供),其类型以 devDependency 引入;内容列宽与视觉对齐宿主 `--dsh-chat-content-width` 等 CSS 变量;`--dsw-alias-*` 为官方语义 token 体系;
+- 客户端文案本地化:第三方客户端插件的文案不能按 `navigator.language` 判定,那样只跟浏览器语言走、与 dsh 界面语言不一致;正确做法是把字典以命名空间注册进宿主 locale 服务(`ctx.locale.register(ns, { zh, en })`,语言 id 仅 `zh`/`en`),并在槽注册时声明 `locale: ns`,框架据此把 `t` 座位注入组件 props、并在语言切换时重建座位(`label` 用 `ctx.locale.bind(ns)` 的 thunk 即可随语言变化);声明了 `locale` 命名空间却不注册字典会让槽装配在渲染期响亮失败;`ctx.locale` 的类型家 `@deepseek-ai/dsh-client-locale` 只承载类型用途,未引入为 devDependency 时可按最小类型面取值(运行时服务由宿主提供);
+- 客户端数据有效性:面板数据端点在没有真实数据时也可能返回 200(占位结构),客户端必须按"字段是否有效"判定而非只看 HTTP 状态,否则会把占位值(如时间戳 0、全 0 指标)当真实数据渲染;
 - WSL/发布版部署:客户端面发现机制优先走 Loader 自身解析(`locatePkgJson` 经 loader `internal.resolveSync` 后取最近祖先 manifest),无 Node 内部时才回退 `createRequire().resolve('<包名>/package.json')`(0.1.5-rc.1、0.1.7-rc.2 与 0.2.0-rc.2 发布包核对同构);0.1.5-rc.1 实测(`NODE_PATH=<profile>/node_modules` 启动)客户端面托管正常(BOOT 注入条目、批量 URL 200),不带 NODE_PATH 未复核,0.1.7-rc.2 与 0.2.0-rc.2 待实机复验;0.2.0-rc.2 托管 URL 仍为批量格式 `/plugins/??<包名>/client.js&rev=...`、首页需启动 URL 的 `?token=` 认证(401/303 下发 cookie,重启换令牌),插件自定义数据路由(如 `/api/system-monitor/snapshot`)无需认证;服务端不受影响;
 - 宿主版本兼容性(dsh 0.2.0-rc.2 起强制):跨 dsh 大版本升级时,dsh 前缀 `peerDependencies` 必须一并升级到目标版本,否则插件在目标版本上会被安装侧拒绝、启动侧禁用(机制细节见 `docs/dsh-dev-docs/dsh-0.2.0-rc.2/index.agent.md` 的「插件版本兼容性策略」);`@deepseek-ai/cordis`、`@deepseek-ai/schemastery` 等非 dsh 前缀 peer 不参与该判定,但仍需按运行时实际版本自行对齐;
 - 直接部署工作流:构建后把 `dist/`(构建产物)、`package.json`、`cordis.patch.yml` 直接复制进 profile 的 `node_modules/<包名>/` 覆盖,重启 dsh web 即可生效(client.js 变化走 rev 刷新),免去 pack/add 往返;tarball 分发统一取 `release/`(`pnpm pack` 归位);

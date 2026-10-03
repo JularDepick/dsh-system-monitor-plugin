@@ -42,6 +42,9 @@ export const PANEL_TAB_ID = 'system-monitor'
 /** 会话区域 tab 排序(位于「对话」「轨迹」之后) */
 export const PANEL_TAB_ORDER = 30
 
+/** 面板文案字典命名空间(注册进宿主 locale 服务,文案随之跟随界面语言) */
+export const PANEL_LOCALE_NAMESPACE = 'system-monitor'
+
 /** 面板页脚作者信息(便于动态替换) */
 export const PANEL_AUTHOR = 'JularDepick'
 
@@ -66,6 +69,64 @@ export const PANEL_BOTTOM_PADDING = 24
 /** 面板区块纵向间距(像素) */
 export const PANEL_STACK_GAP = 6
 
-/** 占用进度条数值槽宽度(像素,右对齐;固定宽度使同列进度条左右边界不随数值位数漂移) */
-export const PANEL_CPU_VALUE_WIDTH = 44
-export const PANEL_MEMORY_VALUE_WIDTH = 104
+/**
+ * 面板排版(字号与行高):直接取宿主排版 token,
+ * 使面板基准字号与 dsh 界面一致并跟随宿主「内容字号」设置;
+ * 回退值为宿主默认值(s-14 = 14px/22px,xxs-12 = 12px/18px,l-20 = 20px/28px)
+ */
+export const PANEL_TYPOGRAPHY = {
+  /** 基准正文与表格(宿主 s-14) */
+  base: { fontSize: 'var(--dsw-font-s-14-font-size, 14px)', lineHeight: 'var(--dsw-font-s-14-line-height, 22px)' },
+  /** 基准正文强调(宿主 s-strong-14) */
+  baseStrong: { fontSize: 'var(--dsw-font-s-strong-14-font-size, 14px)', lineHeight: 'var(--dsw-font-s-strong-14-line-height, 22px)', fontWeight: 500 },
+  /** 次级说明与页脚(宿主 xxs-12) */
+  caption: { fontSize: 'var(--dsw-font-xxs-12-font-size, 12px)', lineHeight: 'var(--dsw-font-xxs-12-line-height, 18px)' },
+  /** 统计卡 KPI 数字(宿主 l-20) */
+  kpi: { fontSize: 'var(--dsw-font-l-20-font-size, 20px)', lineHeight: 'var(--dsw-font-l-20-line-height, 28px)', fontWeight: 600 },
+} as const
+
+/**
+ * 资源占比堆叠条的分段配色(按被监控进程顺序循环取用)。
+ * 全部取自宿主静态色 token(主题包提供,明暗主题下均可辨),回退值为对应静态色默认值
+ */
+export const PANEL_SERIES_COLORS = [
+  'var(--dsw-static-deepseek-500, #4176e6)',
+  'var(--dsw-static-amber-400, #f7ad31)',
+  'var(--dsw-static-green-500, #22c55e)',
+  'var(--dsw-static-red-400, #f25a5a)',
+  'var(--dsw-static-blue-400, #60a5fa)',
+  'var(--dsw-static-deepseek-600, #4868b2)',
+  'var(--dsw-static-amber-600, #dd8629)',
+  'var(--dsw-static-green-400, #4ed17e)',
+  'var(--dsw-static-red-600, #ec1313)',
+  'var(--dsw-static-blue-600, #2563eb)',
+  'var(--dsw-static-neutral-400, #a2a4a6)',
+  'var(--dsw-static-deepseek-400, #7aaaff)',
+]
+
+/** 资源占比堆叠条高度(像素) */
+export const PANEL_SHARE_BAR_HEIGHT = 14
+
+/** 资源占比行左侧指标名宽度(像素,两行对齐) */
+export const PANEL_CHART_LABEL_WIDTH = 44
+
+/** 资源占比行右侧合计数值槽宽度(像素,右对齐,容纳 100.00%) */
+export const PANEL_TOTAL_VALUE_WIDTH = 64
+
+/** 进程名前的配色标识块边长(像素) */
+export const PANEL_SWATCH_SIZE = 10
+
+/** 表格数据单元格左右内边距(像素,固定列宽由此与数值文本宽度推导) */
+export const PANEL_CELL_PADDING_X = 6
+
+/** 进程表 PID 列宽(像素,固定列宽策略下不随内容变化) */
+export const PANEL_TABLE_PID_WIDTH = 64
+
+/** 进程表父进程列宽(像素,固定列宽策略下不随内容变化) */
+export const PANEL_TABLE_PARENT_WIDTH = 72
+
+/** 进程表 CPU 列宽(像素,容纳 100.00% 于基准字号) */
+export const PANEL_TABLE_CPU_WIDTH = 76
+
+/** 进程表内存列宽(像素,容纳「999.99GB · 100.00%」于基准字号) */
+export const PANEL_TABLE_MEMORY_WIDTH = 168
