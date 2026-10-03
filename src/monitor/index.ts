@@ -106,6 +106,8 @@ export function setup(ctx: Context, config: Config): void {
     columns: config.columns,
     cpuScope: config.cpuScope,
     retainRounds: config.retainRounds,
+    laneColorPool: [...config.laneColorPool],
+    laneColorStrategy: config.laneColorStrategy,
   }))
   const mount = (): void => panel.attach(ctx)
   ctx.effect(() => {

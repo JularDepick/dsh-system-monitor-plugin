@@ -8,6 +8,10 @@
 import Schema from '@deepseek-ai/schemastery'
 import {
   DEFAULT_CPU_SCOPE,
+  DEFAULT_LANE_COLOR_POOL,
+  DEFAULT_LANE_COLOR_STRATEGY,
+  MAX_LANE_COLOR_POOL_SIZE,
+  MIN_LANE_COLOR_POOL_SIZE,
   DEFAULT_LANE_NAMES,
   DEFAULT_PANEL_COLUMNS,
   DEFAULT_POLL_INTERVAL,
@@ -17,6 +21,7 @@ import {
   MIN_RETAIN_ROUNDS,
 } from './constants'
 import type { CpuScope, PanelColumns } from './constants'
+import type { LaneColorStrategy } from './monitor/lane-colors'
 
 export interface Config {
   /** 资源采集轮询间隔(毫秒,不低于 `MIN_POLL_INTERVAL`) */
@@ -32,6 +37,13 @@ export interface Config {
    * 期间该行保留显示但数值归零。范围 `MIN_RETAIN_ROUNDS` 至 `MAX_RETAIN_ROUNDS`。
    */
   retainRounds: number
+  /**
+   * 泳道预备颜色池:普通进程/会话按顺序取用的颜色,用户可增删改
+   * (数量不少于 `MIN_LANE_COLOR_POOL_SIZE`,读取时会归一化并补足)。
+   */
+  laneColorPool: string[]
+  /** 泳道颜色取色方案:循环复用(`cycle`)或自动取间色新增(`midpoint`) */
+  laneColorStrategy: LaneColorStrategy
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -40,4 +52,6 @@ export const Config: Schema<Config> = Schema.object({
   columns: Schema.union([1, 2]).default(DEFAULT_PANEL_COLUMNS),
   cpuScope: Schema.union(['machine', 'core']).default(DEFAULT_CPU_SCOPE),
   retainRounds: Schema.number().min(MIN_RETAIN_ROUNDS).max(MAX_RETAIN_ROUNDS).default(DEFAULT_RETAIN_ROUNDS),
+  laneColorPool: Schema.array(Schema.string()).default([...DEFAULT_LANE_COLOR_POOL]),
+  laneColorStrategy: Schema.union(['cycle', 'midpoint']).default(DEFAULT_LANE_COLOR_STRATEGY),
 })

@@ -29,6 +29,7 @@ export { RowRetention } from './monitor/retention'
 export { formatPercent } from './monitor/format'
 export { sortRows, normalizeTableSort } from './monitor/table-sort'
 export { layoutColumnWidths, distributeColumnWidths } from './monitor/table-layout'
+export { normalizeLaneColor, normalizeLaneColorPool, normalizeLaneColorStrategy, mixLaneColors, midpointCandidates, planLaneColors } from './monitor/lane-colors'
 export type {
   MonitorSnapshot,
   ProcessHandle,

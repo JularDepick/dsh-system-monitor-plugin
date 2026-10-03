@@ -133,7 +133,7 @@ export const PANEL_PROJECT_URL = 'https://github.com/JularDepick/dsh-system-moni
 export const PANEL_HIGH_LOAD_THRESHOLD = 90
 
 /** 面板内容区左右内边距(像素;宿主视图区不提供内边距,窗口窄于内容列宽时由它兜底留白) */
-export const PANEL_COLUMN_GUTTER = 16
+export const PANEL_COLUMN_GUTTER = 60
 
 /** 面板内容最大宽度(像素):tab 区域内尽量用满可用宽度,仅在超宽屏上收窄以免表格与占比条过度拉伸 */
 export const PANEL_MAX_WIDTH = 1440
@@ -200,105 +200,111 @@ export const PANEL_TYPOGRAPHY = {
 } as const
 
 /*
- * 面板配色(统一继承当前 profile 的主题 token;明暗两套由宿主给出,面板不自绘颜色)
+ * 面板独立配色(不继承 profile 的主题 token,蓝白色调为主)
  *
- * 每项注释给出宿主主题的真实解析取值(浅色 / 深色),取自官方客户端产物内嵌的主题样式,
- * 便于核对「继承自 profile」而不是凭印象选色;回退值只在宿主 token 缺失时兜底。
+ * 明暗两套取值集中在客户端注入样式的 `--sm-*` 变量里(见 `src/client/index.tsx` 的 panelCss),
+ * 常量只引用变量名,故同一套语义在明暗两套下各自成立,且完全不依赖宿主主题取值。
  * 组织原则:
- *   面 —— 由浅到深形成台阶:页底 → 卡片 → 标题行 → 占比条轨道(明暗两套各自成台阶);
- *   字 —— 四档层级与宿主标签层级一一对应(主 / 次 / 三级 / 说明);
- *   线 —— 两档:常规描边(卡片外框与行分隔)与强化描边(表头下边框与占比条外框);
- *   彩 —— 强调色取宿主的信息 / 业务主色;分段色取宿主静态色序列;状态色取宿主状态档位。
+ *   面 —— 由浅到深三级台阶:卡片面 → 标题行 → 占比条轨道;
+ *   字 —— 三档(主 / 次 / 三级);
+ *   线 —— 两档(常规描边、强化描边);
+ *   彩 —— 语义泳道色固定(主进程与宿主、子代理合计、其他应用、空闲、无成员占位),
+ *         普通成员按顺序取「泳道预备颜色池」(见下方 LANE_COLOR_* 与 DEFAULT_LANE_COLOR_POOL)。
  */
 
+/** 面板底(面板自绘底色,不再依赖宿主页面底色) */
+export const PANEL_SURFACE_COLOR = 'var(--sm-surface)'
 
-/** 卡片面(统计卡与四张维度卡共用:浅色主题为浅灰面,深色主题为抬升面) */
-export const PANEL_CARD_COLOR = 'var(--dsw-alias-bg-module-platform, #f5f6f7)'
+/** 卡片面(统计卡与四张维度卡共用:蓝白主题下的白面/深蓝面) */
+export const PANEL_CARD_COLOR = 'var(--sm-card)'
 
-/**
- * 维度卡标题行底色(比卡片面深一档,用于区分标题与正文):
- * 取滚动条底色二级档,浅色主题 #e5e5e5、深色主题 #545557 —— 深色主题下必须用这一档,
- * 一级档(#3c3c3d)与卡片面(#353638)几乎同色,标题行会读不出分界。
- */
-export const PANEL_CARD_HEAD_COLOR = 'var(--dsw-alias-scrollbar-bg-l2, #e5e5e5)'
+/** 维度卡标题行底色(比卡片面深一档,用于区分标题与正文) */
+export const PANEL_CARD_HEAD_COLOR = 'var(--sm-card-head)'
 
 /** 占比条轨道底色(比标题行再深一档;三段泳道铺满,故只在圆角与边框内侧可见) */
-export const PANEL_SHARE_TRACK_COLOR = 'var(--dsw-alias-scrollbar-hover-l2, #d4d4d4)'
+export const PANEL_SHARE_TRACK_COLOR = 'var(--sm-track)'
 
-/** 常规描边(卡片外框、行分隔):一级描边过淡(浅色主题仅 4% 黑,肉眼近乎不可见),故统一用二级 */
-export const PANEL_BORDER_COLOR = 'var(--dsw-alias-border-l2, #0000001a)'
+/** 常规描边(卡片外框、行分隔) */
+export const PANEL_BORDER_COLOR = 'var(--sm-border)'
 
 /** 强化描边(表头下边框、占比条外框) */
-export const PANEL_BORDER_STRONG_COLOR = 'var(--dsw-alias-border-l3, #0000001f)'
+export const PANEL_BORDER_STRONG_COLOR = 'var(--sm-border-strong)'
 
 /** 文字:主档(标题、KPI、数值) */
-export const PANEL_TEXT_PRIMARY_COLOR = 'var(--dsw-alias-label-primary, #0f1115)'
+export const PANEL_TEXT_PRIMARY_COLOR = 'var(--sm-text-primary)'
 
 /** 文字:次档(卡片标题、系统信息标签) */
-export const PANEL_TEXT_SECONDARY_COLOR = 'var(--dsw-alias-label-secondary, #61666b)'
+export const PANEL_TEXT_SECONDARY_COLOR = 'var(--sm-text-secondary)'
 
 /** 文字:三级档(辅助说明、未采样行、装饰性提示、页脚) */
-export const PANEL_TEXT_TERTIARY_COLOR = 'var(--dsw-alias-label-tertiary, #81858c)'
+export const PANEL_TEXT_TERTIARY_COLOR = 'var(--sm-text-tertiary)'
 
-/**
- * 强调色(主进程 / 宿主泳道、短期趋势线、单点圆点):
- * 取宿主的信息 / 业务主色(浅 #4176e6,深 #7aaaff),随 profile 与明暗主题变化。
- * 不用 `--dsw-alias-brand-primary`:该 token 在本设计系统里是黑白(浅 #0f1115 / 深 #f9fafb),
- * 用作泳道与折线会与正文同色、读不出「主泳道」。
- */
-export const PANEL_ACCENT_COLOR = 'var(--dsw-alias-state-business-primary, var(--dsw-alias-link, #4176e6))'
+/** 强调色(面板强调元素与图例中的 dsh 侧示意) */
+export const PANEL_ACCENT_COLOR = 'var(--sm-accent)'
 
 /** 交互态叠加底色:悬停(半透明,压在各自底色上,故明暗两套都成立) */
-export const PANEL_HOVER_COLOR = 'var(--dsw-alias-interactive-bg-hover, #2631480f)'
+export const PANEL_HOVER_COLOR = 'var(--sm-hover)'
 
-/** 交互态叠加底色:按下与背景标注(趋势线上的工具调用区间) */
-export const PANEL_ACTIVE_COLOR = 'var(--dsw-alias-interactive-bg-active, #2631481a)'
+/** 交互态叠加底色:按下 */
+export const PANEL_ACTIVE_COLOR = 'var(--sm-active)'
 
 /** 状态:正常(状态徽章、无高占用) */
-export const PANEL_STATE_OK_COLOR = 'var(--dsw-alias-state-success-primary, #22c55e)'
+export const PANEL_STATE_OK_COLOR = 'var(--sm-ok)'
 
 /** 状态:警示文字(降级 / 数据源不可用徽章与提示文案) */
-export const PANEL_STATE_WARN_COLOR = 'var(--dsw-alias-state-warn-label, #dd8629)'
+export const PANEL_STATE_WARN_COLOR = 'var(--sm-warn)'
 
 /** 状态:警示底色(数据源不可用提示卡的底色) */
-export const PANEL_STATE_WARN_SURFACE_COLOR = 'var(--dsw-alias-state-warn-tertiary, #fef5e7)'
+export const PANEL_STATE_WARN_SURFACE_COLOR = 'var(--sm-warn-surface)'
 
 /** 状态:错误(高占用数值高亮) */
-export const PANEL_STATE_ERROR_COLOR = 'var(--dsw-alias-state-error-primary, #ec1313)'
+export const PANEL_STATE_ERROR_COLOR = 'var(--sm-error)'
 
-/** 左端「其他应用」泳道底色(宿主静态中性色,明暗同值) */
-export const PANEL_OTHERS_COLOR = 'var(--dsw-static-neutral-400, #a2a4a6)'
-
-/** 右端「空闲」泳道底色(浅灰,与卡片面可辨) */
-export const PANEL_IDLE_COLOR = 'var(--dsw-alias-scrollbar-bg-l1, #e5e5e5)'
-
-/**
- * 中段「无成员」占位底色(灰暗):
- * 取遮罩档位,浅色主题为 24% 黑、深色主题为 50% 黑,故两套主题下都比空闲段更暗,
- * 让「该维度暂无成员」一眼可辨(该占位同时带兜底悬停提示)。
+/*
+ * 语义泳道色:参与泳道名文字色的对比度判定,故必须是具体十六进制值(不接受 CSS 变量)。
  */
-export const PANEL_SHARE_EMPTY_COLOR = 'var(--dsw-alias-bg-mask-1, #0000003d)'
 
-/** 占比条整体外边框颜色(与表头下边框同档:2px 灰色,明暗两套都清晰) */
-export const PANEL_SHARE_BAR_BORDER_COLOR = PANEL_BORDER_STRONG_COLOR
+/** 语义泳道色:主进程与宿主(强调蓝,与预备色池刻意区分) */
+export const LANE_COLOR_PRIMARY = '#2470d8'
 
-/**
- * 资源占比堆叠条的分段配色(非主泳道成员按顺序循环取用)。
- * 全部取自宿主静态色 token(明暗同值,故段内文字色的对比判定可按回退值进行);
- * 不含蓝色家族 —— 强调蓝固定留给主进程 / 宿主泳道(`PANEL_ACCENT_COLOR`),避免与成员分段混淆。
+/** 语义泳道色:会话卡里的子代理合计行(紫) */
+export const LANE_COLOR_SUBAGENT = '#6f5bd6'
+
+/** 语义泳道色:其他应用(灰蓝) */
+export const LANE_COLOR_OTHERS = '#8fa3bf'
+
+/** 语义泳道色:空闲(极浅蓝,明暗两套各自取值) */
+export const LANE_COLOR_IDLE = 'var(--sm-idle)'
+
+/** 语义泳道色:本轮无成员占位(遮罩) */
+export const LANE_COLOR_EMPTY = 'var(--sm-empty)'
+
+/*
+ * 泳道预备颜色池:普通进程/会话按顺序取用,用户可在面板配置中增删改
+ * (默认 16 色,不少于 MIN_LANE_COLOR_POOL_SIZE;全部为中明度色,
+ * 使白字或黑字至少一侧可读,且在明暗两套底色上都可辨)
  */
-export const PANEL_SERIES_COLORS = [
-  'var(--dsw-static-amber-400, #f7ad31)',
-  'var(--dsw-static-green-500, #22c55e)',
-  'var(--dsw-static-red-400, #f25a5a)',
-  'var(--dsw-static-amber-600, #dd8629)',
-  'var(--dsw-static-green-400, #4ed17e)',
-  'var(--dsw-static-red-600, #ec1313)',
-  'var(--dsw-static-neutral-400, #a2a4a6)',
+export const DEFAULT_LANE_COLOR_POOL: readonly string[] = [
+  '#3d7ea6', '#12a3b4', '#6d5bd6', '#1f9d5b',
+  '#d9822b', '#cf4a63', '#4a63b8', '#0f9b9b',
+  '#8d5bd6', '#5aa02c', '#e0a12b', '#c2417a',
+  '#3b82a0', '#158f7a', '#8a6a3b', '#6b7a99',
 ]
+
+/** 泳道预备颜色池的颜色数下限与上限(下限即「不少于 10 个颜色」) */
+export const MIN_LANE_COLOR_POOL_SIZE = 10
+export const MAX_LANE_COLOR_POOL_SIZE = 64
+
+/** 泳道颜色取色方案取值;默认循环复用(不新增颜色) */
+export const LANE_COLOR_STRATEGIES = ['cycle', 'midpoint'] as const
+export const DEFAULT_LANE_COLOR_STRATEGY = 'cycle'
+
 
 /** 占比条整体外边框宽度(像素):2px,明暗主题下都清晰可辨 */
 export const PANEL_SHARE_BAR_BORDER_WIDTH = 2
+
+/** 占比条整体外边框颜色(取强化描边色,使三段泳道有统一外框) */
+export const PANEL_SHARE_BAR_BORDER_COLOR = PANEL_BORDER_STRONG_COLOR
 
 /** 资源占比堆叠条高度(像素;含 1px 外边框) */
 export const PANEL_SHARE_BAR_HEIGHT = 18

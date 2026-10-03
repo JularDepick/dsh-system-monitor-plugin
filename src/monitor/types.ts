@@ -7,6 +7,7 @@
  */
 
 import type { CpuScope, PanelColumns } from '../constants'
+import type { LaneColorStrategy } from './lane-colors'
 
 /** 进程句柄,用于标识一个可被监控的进程 */
 export interface ProcessHandle {
@@ -106,6 +107,10 @@ export interface PanelOptions {
   cpuScope: CpuScope
   /** 列表行留存轮数(连续未采样达到该轮数即从面板移除该行) */
   retainRounds: number
+  /** 泳道预备颜色池(用户可增删改;数量不少于 `MIN_LANE_COLOR_POOL_SIZE`) */
+  laneColorPool: string[]
+  /** 泳道颜色取色方案:循环复用或自动取间色新增 */
+  laneColorStrategy: LaneColorStrategy
 }
 
 /** 面板展示快照 */

@@ -44,12 +44,17 @@ import {
   PANEL_COLUMN_GUTTER,
   PANEL_HIGH_LOAD_THRESHOLD,
   PANEL_HOVER_COLOR,
-  PANEL_IDLE_COLOR,
+  LANE_COLOR_IDLE,
   PANEL_LOCALE_NAMESPACE,
   PANEL_MAX_WIDTH,
-  PANEL_OTHERS_COLOR,
+  LANE_COLOR_OTHERS,
   PANEL_PROJECT_URL,
-  PANEL_SERIES_COLORS,
+  LANE_COLOR_PRIMARY,
+  LANE_COLOR_SUBAGENT,
+  DEFAULT_LANE_COLOR_POOL,
+  DEFAULT_LANE_COLOR_STRATEGY,
+  MIN_LANE_COLOR_POOL_SIZE,
+  MAX_LANE_COLOR_POOL_SIZE,
   PANEL_SHARE_BAR_FALLBACK_WIDTH,
   PANEL_SHARE_BAR_BORDER_COLOR,
   PANEL_SHARE_BAR_BORDER_WIDTH,
@@ -57,7 +62,7 @@ import {
   PANEL_SHARE_BAR_HEIGHT_NAMED,
   PANEL_SETTINGS_REGION_ID,
   PANEL_SHARE_DSH_RATIO,
-  PANEL_SHARE_EMPTY_COLOR,
+  LANE_COLOR_EMPTY,
   PANEL_SHARE_IDLE_RATIO,
   PANEL_SHARE_LABEL_CHAR_WIDTH,
   PANEL_SHARE_LABEL_PADDING,
@@ -104,6 +109,8 @@ import { normalizeTableSort, sortRows } from '../monitor/table-sort'
 import { layoutColumnWidths } from '../monitor/table-layout'
 import type { TableSort } from '../monitor/table-sort'
 import { RowRetention } from '../monitor/retention'
+import { normalizeLaneColorPool, normalizeLaneColorStrategy, planLaneColors, mixLaneColors } from '../monitor/lane-colors'
+import type { LaneColorStrategy } from '../monitor/lane-colors'
 import type { RetainedRow } from '../monitor/retention'
 import type { MonitorSnapshot, ResourceSample } from '../monitor/types'
 
@@ -213,19 +220,26 @@ function formatBytes(bytes: number): string {
   return `${(megabytes / 1024).toFixed(2)}GB`
 }
 
-/** 第 index 个分段的分段配色(超出配色表长度后循环) */
+/**
+ * 当前生效的泳道预备色(长度等于本轮需要配色的普通成员数):
+ * 面板在渲染各卡之前按取色方案算出颜色并写入此处,占比条、表格色块与图例因此同源。
+ */
+let activeLaneColors: readonly string[] = DEFAULT_LANE_COLOR_POOL
+
+/** 第 index 个分段的分段配色(超出生效色池长度后循环) */
 function seriesColor(index: number): string {
-  return PANEL_SERIES_COLORS[index % PANEL_SERIES_COLORS.length]
+  return activeLaneColors[index % activeLaneColors.length]
 }
 
 /**
- * 各分段的最终配色:主进程/宿主泳道固定取品牌色(`PANEL_ACCENT_COLOR`,继承当前 profile),
+ * 各分段的最终配色:主进程/宿主取语义蓝、会话卡的子代理合计行取语义紫,
  * 其余成员按出现顺序取系列色——系列色不参与主泳道,主泳道也不占用系列色名额。
  */
 function groupColors(groups: readonly ShareGroup[]): string[] {
   let next = 0
   return groups.map((group) => {
-    if (group.primary === true) return PANEL_ACCENT_COLOR
+    if (group.primary === true) return LANE_COLOR_PRIMARY
+    if (group.key === SUBAGENT_GROUP_KEY) return LANE_COLOR_SUBAGENT
     const color = seriesColor(next)
     next += 1
     return color
@@ -401,6 +415,24 @@ function groupBySession(
 
 /** 面板内联样式(组件私有,类名前缀 sm- 避免与宿主冲突) */
 const panelCss = `
+/* 面板独立配色(蓝白色调为主):取值全部在本插件内定义,不继承宿主主题 token;
+   深色取值挂在宿主深色主题属性下,使面板在两套宿主主题下都保持可读 */
+.sm-root {
+  --sm-surface: #eef4fd; --sm-card: #ffffff; --sm-card-head: #e4eefc; --sm-track: #cfdff5;
+  --sm-border: #cdddf2; --sm-border-strong: #a9c3e6;
+  --sm-text-primary: #12233d; --sm-text-secondary: #45597a; --sm-text-tertiary: #6f83a3;
+  --sm-accent: #2470d8; --sm-hover: #2470d814; --sm-active: #2470d824;
+  --sm-ok: #16a34a; --sm-warn: #c2740c; --sm-warn-surface: #fff5e3; --sm-error: #d92d20;
+  --sm-idle: #dce8f9; --sm-empty: #12233d2e;
+}
+body[data-ds-dark-theme] .sm-root {
+  --sm-surface: #0d1524; --sm-card: #16223a; --sm-card-head: #2a3a58; --sm-track: #3d5178;
+  --sm-border: #33456a; --sm-border-strong: #5a7099;
+  --sm-text-primary: #e9effb; --sm-text-secondary: #b5c3dc; --sm-text-tertiary: #8595b1;
+  --sm-accent: #5b9bff; --sm-hover: #5b9bff1f; --sm-active: #5b9bff33;
+  --sm-ok: #3ecf72; --sm-warn: #e0a63c; --sm-warn-surface: #2a2314; --sm-error: #ff6b6b;
+  --sm-idle: #2a3a58; --sm-empty: #e9effb2e;
+}
 .sm-skeleton { background: linear-gradient(90deg, ${PANEL_HOVER_COLOR} 25%, ${PANEL_BORDER_COLOR} 50%, ${PANEL_HOVER_COLOR} 75%); background-size: 400% 100%; animation: sm-shimmer 1.4s ease-in-out infinite; }
 @keyframes sm-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .sm-skeleton { animation: none; } }
@@ -612,6 +644,12 @@ interface StoredPreferences {
   hiddenColumns: PanelTableColumn[] | null
   /** 行留存轮数(浏览器端覆盖插件配置;缺失表示沿用插件配置) */
   retainRounds: number | null
+  /** 泳道预备颜色池(本地改动覆盖插件配置;null 表示未改过) */
+  laneColorPool: string[] | null
+  /** 泳道颜色取色方案(本地改动覆盖插件配置) */
+  laneColorStrategy: LaneColorStrategy | null
+  /** 取间色新增时的候选起点(仅自动取间色方案有意义) */
+  laneColorCursor: number | null
 }
 
 /**
@@ -648,7 +686,7 @@ function normalizeCollapsed(value: unknown): PanelCollapsed | null {
 
 /** 读取浏览器端记住的偏好(不可用或未记录时各项为 null) */
 function readStoredPreferences(): StoredPreferences {
-  const empty: StoredPreferences = { laneNames: null, columns: null, collapsed: null, cpuScope: null, tableSort: null, hiddenColumns: null, retainRounds: null }
+  const empty: StoredPreferences = { laneNames: null, columns: null, collapsed: null, cpuScope: null, tableSort: null, hiddenColumns: null, retainRounds: null, laneColorPool: null, laneColorStrategy: null, laneColorCursor: null }
   try {
     if (typeof localStorage === 'undefined') return empty
     const raw = localStorage.getItem(PANEL_STORAGE_KEY)
@@ -661,6 +699,9 @@ function readStoredPreferences(): StoredPreferences {
       tableSort?: unknown
       hiddenColumns?: unknown
       retainRounds?: unknown
+      laneColorPool?: unknown
+      laneColorStrategy?: unknown
+      laneColorCursor?: unknown
     }
     return {
       laneNames: typeof parsed.laneNames === 'boolean' ? parsed.laneNames : null,
@@ -670,6 +711,9 @@ function readStoredPreferences(): StoredPreferences {
       tableSort: parsed.tableSort === undefined || parsed.tableSort === null ? null : normalizeTableSort(parsed.tableSort),
       hiddenColumns: normalizeHiddenColumns(parsed.hiddenColumns),
       retainRounds: normalizeRetainRounds(parsed.retainRounds),
+      laneColorPool: Array.isArray(parsed.laneColorPool) ? normalizeLaneColorPool(parsed.laneColorPool, DEFAULT_LANE_COLOR_POOL, MIN_LANE_COLOR_POOL_SIZE) : null,
+      laneColorStrategy: parsed.laneColorStrategy === undefined ? null : normalizeLaneColorStrategy(parsed.laneColorStrategy, DEFAULT_LANE_COLOR_STRATEGY),
+      laneColorCursor: typeof parsed.laneColorCursor === 'number' && Number.isFinite(parsed.laneColorCursor) ? Math.max(0, Math.floor(parsed.laneColorCursor)) : null,
     }
   } catch {
     return empty
@@ -789,8 +833,8 @@ function ShareTrack(props: {
         }}
       >
         {/* 左端泳道:与 dsh 无关的系统进程合计 */}
-        <div title={`${othersName} ${othersCandidates[0]}`} style={{ flex: othersFlex, background: PANEL_OTHERS_COLOR, ...laneCellStyle }}>
-          {named(othersName, laneWidth(PANEL_SHARE_OTHERS_RATIO), contrastTextColor(PANEL_OTHERS_COLOR))}
+        <div title={`${othersName} ${othersCandidates[0]}`} style={{ flex: othersFlex, background: LANE_COLOR_OTHERS, ...laneCellStyle }}>
+          {named(othersName, laneWidth(PANEL_SHARE_OTHERS_RATIO), contrastTextColor(LANE_COLOR_OTHERS))}
         </div>
         {/* 中段泳道:dsh 及其子进程,按成员显示权重分段(最大者封顶 1/3,零占用成员保底占位);
             无成员时铺灰暗占位并给兜底悬停提示,避免中段露出空白 */}
@@ -800,7 +844,7 @@ function ShareTrack(props: {
             display: 'flex',
             flex: dshFlex,
             minWidth: 0,
-            ...(props.groups.length === 0 ? { background: PANEL_SHARE_EMPTY_COLOR } : {}),
+            ...(props.groups.length === 0 ? { background: LANE_COLOR_EMPTY } : {}),
           }}
         >
           {props.groups.map((group, index) => {
@@ -817,7 +861,7 @@ function ShareTrack(props: {
           })}
         </div>
         {/* 右端泳道:整机未被占用的资源(淡灰底色,不用纯白) */}
-        <div title={`${idleName} ${idleCandidates[0]}`} style={{ flex: idleFlex, background: PANEL_IDLE_COLOR, ...laneCellStyle }}>
+        <div title={`${idleName} ${idleCandidates[0]}`} style={{ flex: idleFlex, background: LANE_COLOR_IDLE, ...laneCellStyle }}>
           {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO), PANEL_TEXT_TERTIARY_COLOR)}
         </div>
       </div>
@@ -883,13 +927,13 @@ function ShareRow(props: {
 /** 占比条图例:三段泳道的含义(中段用系列色渐变表示按成员分段) */
 function ShareLegend(props: { t: PanelTranslate }): ReactNode {
   const items: { key: string; color: string; label: string }[] = [
-    { key: 'others', color: PANEL_OTHERS_COLOR, label: props.t('chart.others') },
+    { key: 'others', color: LANE_COLOR_OTHERS, label: props.t('chart.others') },
     {
       key: 'dsh',
       color: `linear-gradient(90deg, ${PANEL_ACCENT_COLOR} 0 34%, ${seriesColor(0)} 34% 67%, ${seriesColor(1)} 67% 100%)`,
       label: props.t('chart.dsh'),
     },
-    { key: 'idle', color: PANEL_IDLE_COLOR, label: props.t('chart.idle') },
+    { key: 'idle', color: LANE_COLOR_IDLE, label: props.t('chart.idle') },
   ]
   return (
     <div
@@ -1085,6 +1129,14 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 故编辑期只记草稿,失焦或回车时才收敛并提交。
    */
   const [retainDraft, setRetainDraft] = useState<string | null>(null)
+  /** 取间色新增后的待落盘色池(渲染期登记,快照更新后的副作用里提交) */
+  const lanePoolPendingRef = useRef<{ pool: string[]; cursor: number } | null>(null)
+  useEffect(() => {
+    const pending = lanePoolPendingRef.current
+    if (pending === null) return
+    lanePoolPendingRef.current = null
+    setPreferences((prev) => ({ ...prev, laneColorPool: pending.pool, laneColorCursor: pending.cursor }))
+  }, [snapshot])
 
   /**
    * 配置入口按钮(面板右上角;用宿主官方按钮,配色继承当前 profile)。
@@ -1194,7 +1246,19 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 连续未采样达到该轮数即从列表移除该行(见下方留存逻辑)。
    * 声明位置需早于使用它的提交函数,故与其它偏好派生值放在一起。
    */
-  const retainRounds = preferences.retainRounds ?? snapshot?.panelOptions?.retainRounds ?? DEFAULT_RETAIN_ROUNDS  /** 某可选列当前是否可见 */
+  const retainRounds = preferences.retainRounds ?? snapshot?.panelOptions?.retainRounds ?? DEFAULT_RETAIN_ROUNDS
+  /** 泳道预备颜色池(本地偏好优先,其次插件配置,最后内置默认值;数量不足时自动补足) */
+  const lanePool = normalizeLaneColorPool(
+    preferences.laneColorPool ?? snapshot?.panelOptions?.laneColorPool,
+    DEFAULT_LANE_COLOR_POOL,
+    MIN_LANE_COLOR_POOL_SIZE,
+  )
+  /** 泳道颜色取色方案:池内颜色不够用时循环复用或自动取间色新增 */
+  const laneStrategy = normalizeLaneColorStrategy(
+    preferences.laneColorStrategy ?? snapshot?.panelOptions?.laneColorStrategy,
+    DEFAULT_LANE_COLOR_STRATEGY,
+  )
+  /** 某可选列当前是否可见 */
   const columnVisible = (id: PanelTableColumn): boolean => !hiddenColumns.includes(id)
   /** 切换某可选列的显示与隐藏并写入本地偏好 */
   const toggleColumn = (id: PanelTableColumn): void => {
@@ -1208,6 +1272,34 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     const parsed = Number.parseInt(raw, 10)
     setPreference('retainRounds', Number.isFinite(parsed) ? normalizeRetainRounds(parsed) ?? retainRounds : retainRounds)
     setRetainDraft(null)
+  }
+
+  /** 改写池内某个颜色:归一化后再落盘,非法输入回退为原池 */
+  const updateLaneColor = (index: number, raw: string): void => {
+    if (index < 0 || index >= lanePool.length) return
+    const next = [...lanePool]
+    next[index] = raw
+    setPreference('laneColorPool', normalizeLaneColorPool(next, lanePool, MIN_LANE_COLOR_POOL_SIZE))
+  }
+
+  /** 追加一个颜色(取池尾与池首的中间色,使新增色与相邻色协调) */
+  const addLaneColor = (): void => {
+    if (lanePool.length >= MAX_LANE_COLOR_POOL_SIZE) return
+    const last = lanePool[lanePool.length - 1] ?? '#3d7ea6'
+    const first = lanePool[0] ?? '#12a3b4'
+    setPreference('laneColorPool', [...lanePool, mixLaneColors(last, first)])
+  }
+
+  /** 移除池内某个颜色:不低于下限时才允许,避免池被删空 */
+  const removeLaneColor = (index: number): void => {
+    if (lanePool.length <= MIN_LANE_COLOR_POOL_SIZE) return
+    setPreference('laneColorPool', lanePool.filter((_, at) => at !== index))
+  }
+
+  /** 恢复默认颜色池并重置取间色的候选起点 */
+  const resetLaneColorPool = (): void => {
+    setPreference('laneColorPool', [...DEFAULT_LANE_COLOR_POOL])
+    setPreference('laneColorCursor', 0)
   }
 
   /**
@@ -1355,6 +1447,58 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           </span>
         </div>
         <div style={settingsRowStyle}>
+          <span style={settingsLabelStyle}>{t('config.laneColorStrategy')}</span>
+          <SegmentedControl
+            id="sm-lane-color-strategy"
+            value={laneStrategy}
+            options={[
+              { value: 'cycle', label: t('config.laneColorStrategyCycle') },
+              { value: 'midpoint', label: t('config.laneColorStrategyMidpoint') },
+            ]}
+            onChange={(next) => setPreference('laneColorStrategy', next === 'midpoint' ? 'midpoint' : 'cycle')}
+            label={t('config.laneColorStrategy')}
+          />
+        </div>
+        <div style={settingsRowStyle}>
+          <span style={settingsLabelStyle}>{t('config.laneColorPool', { count: lanePool.length })}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {lanePool.map((color, index) => (
+                <span key={`sm-lane-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span
+                    aria-hidden="true"
+                    style={{ width: PANEL_SWATCH_SIZE * 1.4, height: PANEL_SWATCH_SIZE * 1.4, borderRadius: 3, background: color, border: `1px solid ${PANEL_BORDER_COLOR}`, boxSizing: 'border-box' }}
+                  />
+                  <Input
+                    value={color}
+                    aria-label={t('config.laneColorValue', { index: index + 1 })}
+                    title={t('config.laneColorValueHint')}
+                    style={{ width: 92 }}
+                    onChange={(event) => updateLaneColor(index, event.target.value)}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={lanePool.length <= MIN_LANE_COLOR_POOL_SIZE}
+                    title={t('config.laneColorRemove')}
+                    aria-label={t('config.laneColorRemove')}
+                    onClick={() => removeLaneColor(index)}
+                  >
+                    <IconCloseOutlineRegular />
+                  </Button>
+                </span>
+              ))}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Button variant="ghost" size="sm" disabled={lanePool.length >= MAX_LANE_COLOR_POOL_SIZE} onClick={addLaneColor}>{t('config.laneColorAdd')}</Button>
+              <Button variant="ghost" size="sm" onClick={resetLaneColorPool}>{t('config.laneColorReset')}</Button>
+            </div>
+            <span style={{ color: PANEL_TEXT_TERTIARY_COLOR, ...PANEL_TYPOGRAPHY.caption }}>
+              {t('config.laneColorPoolHint', { min: MIN_LANE_COLOR_POOL_SIZE, max: MAX_LANE_COLOR_POOL_SIZE })}
+            </span>
+          </div>
+        </div>
+        <div style={settingsRowStyle}>
           <span style={settingsLabelStyle}>{t('config.export')}</span>
           <Button variant="ghost" size="sm" onClick={() => { void copySnapshot() }}>
             {exportState === 'copied' ? t('config.exported') : exportState === 'failed' ? t('config.exportFailed') : t('config.export')}
@@ -1374,7 +1518,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   // 加载中:骨架屏占位
   if (snapshot === null && !unavailable) {
     return (
-      <div className="sm-column" style={columnStyle}>
+      <div className="sm-root sm-column" style={columnStyle}>
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{settingsAnchor}</div>
         {[0, 1].map((index) => (
           <div key={index} className="sm-skeleton" style={{ height: 56, borderRadius: 12 }} />
@@ -1387,7 +1531,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   // 数据源不可用(无采样或轮询失败且无旧快照):警告条(自动轮询重试)
   if (!sampled) {
     return (
-      <div className="sm-column" style={columnStyle}>
+      <div className="sm-root sm-column" style={columnStyle}>
         <div
           role="alert"
           style={{ ...cardStyle, background: PANEL_STATE_WARN_SURFACE_COLOR, padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
@@ -1514,6 +1658,23 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const sessionCount = sessionGroups.filter(
     (group) => group.key !== HOST_GROUP_KEY && group.key !== UNATTRIBUTED_GROUP_KEY && group.key !== SUBAGENT_GROUP_KEY,
   ).length
+  /**
+   * 泳道配色:语义槽位(主进程与宿主、会话卡的子代理合计行)不占用预备色池名额,
+   * 其余普通成员按顺序取池内颜色;成员数超过池容量时按取色方案处理,结果写入生效色池。
+   */
+  const lanePlan = planLaneColors(
+    [currentSessionGroups, processGroups, sessionGroups, subagentGroups].reduce(
+      (total, groups) => total + groups.filter((group) => group.primary !== true && group.key !== SUBAGENT_GROUP_KEY).length,
+      0,
+    ),
+    lanePool,
+    laneStrategy,
+    preferences.laneColorCursor ?? 0,
+  )
+  activeLaneColors = lanePlan.colors.length === 0 ? lanePool : lanePlan.colors
+  if (laneStrategy === 'midpoint' && lanePlan.pool.length !== lanePool.length) {
+    lanePoolPendingRef.current = { pool: lanePlan.pool, cursor: lanePlan.cursor }
+  }
   const currentSessionColors = groupColors(currentSessionGroups)
   /** 两张卡各自的成员配色(主进程/宿主固定品牌蓝,其余按系列色) */
   const processColors = groupColors(processGroups)
@@ -1801,7 +1962,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   ]
 
   return (
-    <div className="sm-column" style={columnStyle}>
+    <div className="sm-root sm-column" style={columnStyle}>
       <style>{panelCss}</style>
       {/* 统计卡:KPI 与状态(静态面色用层级 token,不用交互态 hover token) */}
       <div style={{ ...cardStyle, background: PANEL_CARD_COLOR, padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
