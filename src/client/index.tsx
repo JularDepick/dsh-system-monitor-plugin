@@ -33,6 +33,7 @@ import {
   PANEL_CHART_LABEL_WIDTH,
   PANEL_COLUMN_GUTTER,
   PANEL_HIGH_LOAD_THRESHOLD,
+  PANEL_IDLE_COLOR,
   PANEL_LOCALE_NAMESPACE,
   PANEL_MAX_WIDTH,
   PANEL_OTHERS_COLOR,
@@ -40,6 +41,8 @@ import {
   PANEL_PROJECT_URL,
   PANEL_SERIES_COLORS,
   PANEL_SHARE_BAR_FALLBACK_WIDTH,
+  PANEL_SHARE_BAR_BORDER_COLOR,
+  PANEL_SHARE_BAR_BORDER_WIDTH,
   PANEL_SHARE_BAR_HEIGHT,
   PANEL_SHARE_BAR_HEIGHT_NAMED,
   PANEL_SHARE_DSH_RATIO,
@@ -59,10 +62,12 @@ import {
   PANEL_TAB_ID,
   PANEL_TAB_ORDER,
   PANEL_TABLE_CPU_WIDTH,
-  PANEL_TABLE_MEMORY_WIDTH,
+  PANEL_TABLE_MEMORY_PERCENT_WIDTH,
+  PANEL_TABLE_MEMORY_VALUE_WIDTH,
   PANEL_TABLE_PARENT_WIDTH,
   PANEL_TABLE_PID_WIDTH,
   PANEL_TABLE_SESSION_COUNT_WIDTH,
+  PANEL_TABLE_SESSION_WIDTH,
   PANEL_TOP_PADDING,
   PANEL_TYPOGRAPHY,
   PLUGIN_NAME,
@@ -97,16 +102,33 @@ interface ShareGroup {
   primary?: boolean
 }
 
-/** 占比条两端泳道所需的整机口径数值(均为占整机百分比) */
+/** 占比条两端泳道所需的整机口径数值(百分比 + 内存绝对值) */
 interface MachineShare {
   /** 左端:与 dsh 无关的系统进程 CPU 合计 */
   othersCpu: number
   /** 右端:整机未被占用的 CPU */
   idleCpu: number
-  /** 左端:与 dsh 无关的系统进程内存合计 */
+  /** 左端:与 dsh 无关的系统进程内存合计(占整机百分比) */
   othersMemory: number
-  /** 右端:整机未被占用的内存 */
+  /** 左端:与 dsh 无关的系统进程内存合计(字节) */
+  othersMemoryBytes: number
+  /** 右端:整机未被占用的内存(占整机百分比) */
   idleMemory: number
+  /** 整机物理内存总量(字节;用于推出「空闲」的绝对值) */
+  totalMemoryBytes: number
+}
+
+/**
+ * 各段候选文字(从左到右依次尝试,取第一个放得下的,都不放得下则留空);
+ * 缺省时只用整机百分比。悬停提示恒取第一项(信息最全)。
+ */
+interface ShareTexts {
+  /** 中段成员候选文字 */
+  member?: (group: ShareGroup) => readonly string[]
+  /** 左端候选文字 */
+  others?: readonly string[]
+  /** 右端候选文字 */
+  idle?: readonly string[]
 }
 
 /** 归入「宿主」组的保留键(宿主进程承载全部会话,不能归给某一个会话) */
@@ -164,6 +186,14 @@ function groupColors(groups: readonly ShareGroup[]): string[] {
 /** 占比条段标签是否放得下:按字宽估算,文字宽加留白不超过所在段/格宽度 */
 function labelFits(text: string, cellWidth: number, padding: number = PANEL_SHARE_LABEL_PADDING): boolean {
   return text.length > 0 && cellWidth >= text.length * PANEL_SHARE_LABEL_CHAR_WIDTH + padding
+}
+
+/** 从候选文字里取第一个放得下的(都不放得下则留空,由悬停提示兜底) */
+function fitText(candidates: readonly string[], cellWidth: number, padding: number = PANEL_SHARE_LABEL_PADDING): string {
+  for (const candidate of candidates) {
+    if (labelFits(candidate, cellWidth, padding)) return candidate
+  }
+  return ''
 }
 
 /** 进程显示名(缺失时退化为 pid) */
@@ -263,9 +293,13 @@ function groupBySession(
     }
     merge(group, sample)
   }
+  /**
+   * 顺序即展示顺序(中段泳道从左到右、表格自上而下):
+   * 宿主组固定在最前(占中段左端),其后是各会话(向右依次排布),无归属组置于最后。
+   */
   return [
-    ...groups.values(),
     ...(host === undefined ? [] : [host]),
+    ...groups.values(),
     ...(unattributed === undefined ? [] : [unattributed]),
   ]
 }
@@ -369,13 +403,16 @@ const shareLabelStyle: CSSProperties = {
   ...PANEL_TYPOGRAPHY.caption,
 }
 
-/** 泳道单元格:名称在其中居中,超出即裁切 */
+/** 泳道单元格:名称在其中居中,超出即裁切(自身不带内外边距与行高,避免影响泳道高度) */
 const laneCellStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   minWidth: 0,
   overflow: 'hidden',
+  padding: 0,
+  margin: 0,
+  lineHeight: 0,
 }
 
 /**
@@ -385,10 +422,14 @@ const laneCellStyle: CSSProperties = {
  */
 const nameTextStyle: CSSProperties = {
   maxWidth: '100%',
+  padding: 0,
+  margin: 0,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
   ...PANEL_TYPOGRAPHY.caption,
+  // 行高压到 1:文字框只占字号高度,不把宿主说明字号的 18px 行高带进泳道
+  lineHeight: 1,
 }
 
 /**
@@ -515,6 +556,8 @@ function StatusBadge(props: { tone: 'ok' | 'warn' | 'error'; label: string }): R
 function ShareTrack(props: {
   groups: readonly ShareGroup[]
   pick: (group: ShareGroup) => number
+  /** 段文字候选(缺省用整机百分比;内存泳道给「具体数值 · 百分比」等逐级退化的候选) */
+  texts?: ShareTexts
   others: number
   idle: number
   width: number
@@ -528,6 +571,8 @@ function ShareTrack(props: {
   const dshTotal = values.reduce((sum, value) => sum + value, 0)
   const othersText = formatPercent(props.others)
   const idleText = formatPercent(props.idle)
+  const othersCandidates = props.texts?.others ?? [othersText]
+  const idleCandidates = props.texts?.idle ?? [idleText]
   const othersName = props.t('chart.others')
   const idleName = props.t('chart.idle')
   const laneWidth = (ratio: number): number => props.width * ratio
@@ -538,6 +583,9 @@ function ShareTrack(props: {
     props.names && labelFits(text, cellWidth, PANEL_SHARE_NAME_PADDING)
       ? <span style={{ ...nameTextStyle, color }}>{text}</span>
       : null
+  /** 段文字候选:内存泳道给「具体数值 · 百分比」并逐级退化,其余给整机百分比 */
+  const segmentCandidates = (group: ShareGroup, value: number): readonly string[] =>
+    props.texts?.member?.(group) ?? [formatPercent(value)]
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
       <div
@@ -549,13 +597,15 @@ function ShareTrack(props: {
         style={{
           display: 'flex',
           height: props.names ? PANEL_SHARE_BAR_HEIGHT_NAMED : PANEL_SHARE_BAR_HEIGHT,
+          boxSizing: 'border-box',
+          border: `${PANEL_SHARE_BAR_BORDER_WIDTH}px solid ${PANEL_SHARE_BAR_BORDER_COLOR}`,
           borderRadius: 999,
           background: PANEL_SHARE_TRACK_COLOR,
           overflow: 'hidden',
         }}
       >
         {/* 左端泳道:与 dsh 无关的系统进程合计 */}
-        <div title={`${othersName} ${othersText}`} style={{ flex: othersFlex, background: PANEL_OTHERS_COLOR, ...laneCellStyle }}>
+        <div title={`${othersName} ${othersCandidates[0]}`} style={{ flex: othersFlex, background: PANEL_OTHERS_COLOR, ...laneCellStyle }}>
           {named(othersName, laneWidth(PANEL_SHARE_OTHERS_RATIO), contrastTextColor(PANEL_OTHERS_COLOR))}
         </div>
         {/* 中段泳道:dsh 及其子进程,按成员显示权重分段(最大者封顶 1/3,零占用成员保底占位) */}
@@ -565,7 +615,7 @@ function ShareTrack(props: {
             return (
               <div
                 key={group.key}
-                title={`${group.label} ${formatPercent(values[index])}`}
+                title={`${group.label} ${segmentCandidates(group, values[index])[0]}`}
                 style={{ flexGrow: weights[index], flexBasis: 0, background: colors[index], ...laneCellStyle }}
               >
                 {named(group.label, laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index], contrastTextColor(colors[index]))}
@@ -573,31 +623,31 @@ function ShareTrack(props: {
             )
           })}
         </div>
-        {/* 右端泳道:整机未被占用的资源(保持轨道底色) */}
-        <div title={`${idleName} ${idleText}`} style={{ flex: idleFlex, ...laneCellStyle }}>
+        {/* 右端泳道:整机未被占用的资源(淡灰底色,不用纯白) */}
+        <div title={`${idleName} ${idleCandidates[0]}`} style={{ flex: idleFlex, background: PANEL_IDLE_COLOR, ...laneCellStyle }}>
           {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO), 'var(--dsw-alias-label-tertiary)')}
         </div>
       </div>
-      {/* 段标签行:与三段同构,数值为占整机百分比,放不下则留空 */}
+      {/* 段标签行:与三段同构,取第一个放得下的候选文字(内存行会给「数值 · 百分比」) */}
       <div style={{ display: 'flex', width: '100%', height: 18 }}>
         <div style={{ flex: othersFlex, ...shareLabelStyle }}>
-          {labelFits(othersText, laneWidth(PANEL_SHARE_OTHERS_RATIO)) ? othersText : ''}
+          {fitText(othersCandidates, laneWidth(PANEL_SHARE_OTHERS_RATIO))}
         </div>
         <div style={{ display: 'flex', flex: dshFlex, minWidth: 0 }}>
           {props.groups.map((group, index) => {
             const value = values[index]
-            // 零占用成员不显示 0.00% 标签(信息由悬停提示给出),保持标签行干净
-            const text = value > 0 ? formatPercent(value) : ''
+            // 零占用成员不显示标签(信息由悬停提示给出),保持标签行干净
+            const candidates = value > 0 ? segmentCandidates(group, value) : []
             const segmentWidth = laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index]
             return (
               <div key={group.key} style={{ flexGrow: weights[index], flexBasis: 0, ...shareLabelStyle }}>
-                {labelFits(text, segmentWidth) ? text : ''}
+                {fitText(candidates, segmentWidth)}
               </div>
             )
           })}
         </div>
         <div style={{ flex: idleFlex, ...shareLabelStyle }}>
-          {labelFits(idleText, laneWidth(PANEL_SHARE_IDLE_RATIO)) ? idleText : ''}
+          {fitText(idleCandidates, laneWidth(PANEL_SHARE_IDLE_RATIO))}
         </div>
       </div>
     </div>
@@ -609,6 +659,7 @@ function ShareRow(props: {
   label: string
   groups: readonly ShareGroup[]
   pick: (group: ShareGroup) => number
+  texts?: ShareTexts
   others: number
   idle: number
   width: number
@@ -623,6 +674,7 @@ function ShareRow(props: {
       <ShareTrack
         groups={props.groups}
         pick={props.pick}
+        {...(props.texts === undefined ? {} : { texts: props.texts })}
         others={props.others}
         idle={props.idle}
         width={props.width}
@@ -643,7 +695,7 @@ function ShareLegend(props: { t: PanelTranslate }): ReactNode {
       color: `linear-gradient(90deg, ${PANEL_PRIMARY_COLOR} 0 34%, ${seriesColor(0)} 34% 67%, ${seriesColor(1)} 67% 100%)`,
       label: props.t('chart.dsh'),
     },
-    { key: 'idle', color: PANEL_SHARE_TRACK_COLOR, label: props.t('chart.idle') },
+    { key: 'idle', color: PANEL_IDLE_COLOR, label: props.t('chart.idle') },
   ]
   return (
     <div
@@ -692,6 +744,8 @@ function DimensionCard(props: {
 }): ReactNode {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const [width, setWidth] = useState(PANEL_SHARE_BAR_FALLBACK_WIDTH)
+  /** 卡片内容(泳道图 + 明细表)是否展开:点击头部整行切换,默认展开 */
+  const [tableOpen, setTableOpen] = useState(true)
 
   useEffect(() => {
     const element = bodyRef.current
@@ -703,12 +757,22 @@ function DimensionCard(props: {
     })
     observer.observe(element)
     return () => observer.disconnect()
-  }, [])
+    // 展开时才测量:折叠期间泳道不在 DOM 中,重新展开需重新挂观察器
+  }, [tableOpen])
 
   const cpuTotal = props.groups.reduce((sum, group) => sum + group.cpuPercent, 0)
   const memoryTotal = props.groups.reduce((sum, group) => sum + group.memoryPercent, 0)
-  /** 明细表是否展开:点击卡片标题(整行)切换,默认展开 */
-  const [tableOpen, setTableOpen] = useState(true)
+  /**
+   * 空闲内存绝对值:整机总量减去其他应用与已监控成员,下限截零;
+   * 与采集器的「空闲 = 100 − 其他 − dsh」口径同源,故百分比与绝对值一致。
+   */
+  const idleMemoryBytes = Math.max(
+    0,
+    props.machine.totalMemoryBytes
+      - props.machine.othersMemoryBytes
+      - props.groups.reduce((sum, group) => sum + group.memoryBytes, 0),
+  )
+  /** 折叠开关的提示文案(展开时提示可收起,收起时提示可展开) */
   const toggleLabel = tableOpen ? props.t('table.collapse') : props.t('table.expand')
 
   return (
@@ -727,8 +791,10 @@ function DimensionCard(props: {
           {props.t('chart.headerTotal', { metric: props.t('table.column.memory'), value: formatPercent(memoryTotal) })}
         </span>
       </button>
-      <div ref={bodyRef} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px' }}>
-        <ShareLegend t={props.t} />
+      {!tableOpen ? null : (
+        <>
+          <div ref={bodyRef} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px' }}>
+            <ShareLegend t={props.t} />
         <ShareRow
           label={props.t('table.column.cpu')}
           groups={props.groups}
@@ -743,14 +809,32 @@ function DimensionCard(props: {
           label={props.t('table.column.memory')}
           groups={props.groups}
           pick={(group) => group.memoryPercent}
+          texts={{
+            // 依次尝试:数值 · 百分比 → 仅数值 → 仅百分比(放不下就退化,悬停恒给最全的一条)
+            member: (group) => [
+              `${formatBytes(group.memoryBytes)} · ${formatPercent(group.memoryPercent)}`,
+              formatBytes(group.memoryBytes),
+              formatPercent(group.memoryPercent),
+            ],
+            others: [
+              `${formatBytes(props.machine.othersMemoryBytes)} · ${formatPercent(props.machine.othersMemory)}`,
+              formatBytes(props.machine.othersMemoryBytes),
+              formatPercent(props.machine.othersMemory),
+            ],
+            idle: [
+              `${formatBytes(idleMemoryBytes)} · ${formatPercent(props.machine.idleMemory)}`,
+              formatBytes(idleMemoryBytes),
+              formatPercent(props.machine.idleMemory),
+            ],
+          }}
           others={props.machine.othersMemory}
           idle={props.machine.idleMemory}
           width={width}
           names={props.names}
           t={props.t}
         />
-      </div>
-      {!tableOpen ? null : props.groups.length === 0 ? (
+          </div>
+          {props.groups.length === 0 ? (
         <div style={{ color: 'var(--dsw-alias-label-tertiary)', textAlign: 'center', padding: '0 0 10px', ...PANEL_TYPOGRAPHY.base }}>
           {props.emptyText}
         </div>
@@ -761,7 +845,9 @@ function DimensionCard(props: {
             <tr>{props.headCells}</tr>
           </thead>
           <tbody>{props.groups.map((group, index) => props.row(group, index))}</tbody>
-        </table>
+            </table>
+          )}
+        </>
       )}
     </div>
   )
@@ -927,7 +1013,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     othersCpu: snapshot.totals.othersCpuPercent,
     idleCpu: snapshot.totals.idleCpuPercent,
     othersMemory: snapshot.totals.othersMemoryPercent,
+    othersMemoryBytes: snapshot.totals.othersMemoryBytes,
     idleMemory: snapshot.totals.idleMemoryPercent,
+    totalMemoryBytes: snapshot.totalMemoryBytes,
   }
   const summary: { key: 'summary.sampledAt' | 'summary.platform' | 'summary.pollInterval' | 'summary.cpuCount' | 'summary.totalMemory' | 'summary.rootPid' | 'summary.others'; value: string }[] = [
     { key: 'summary.sampledAt', value: formatDateTime(snapshot.sampledAt) },
@@ -1008,8 +1096,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <col />
             <col style={{ width: PANEL_TABLE_PID_WIDTH }} />
             <col style={{ width: PANEL_TABLE_PARENT_WIDTH }} />
+            <col style={{ width: PANEL_TABLE_SESSION_WIDTH }} />
             <col style={{ width: PANEL_TABLE_CPU_WIDTH }} />
-            <col style={{ width: PANEL_TABLE_MEMORY_WIDTH }} />
+            <col style={{ width: PANEL_TABLE_MEMORY_VALUE_WIDTH }} />
+            <col style={{ width: PANEL_TABLE_MEMORY_PERCENT_WIDTH }} />
           </colgroup>
         )}
         headCells={(
@@ -1017,13 +1107,18 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <th scope="col" style={headCellStyle}>{t('table.column.process')}</th>
             <th scope="col" style={headCellStyle}>{t('table.column.pid')}</th>
             <th scope="col" style={headCellStyle}>{t('table.column.parent')}</th>
+            <th scope="col" style={headCellStyle}>{t('table.column.session')}</th>
             <th scope="col" style={headCellStyle}>{t('table.column.cpu')}</th>
-            <th scope="col" style={headCellStyle}>{t('table.column.memory')}</th>
+            {/* 内存拆为「具体数值 + 占比」两列,共用这一个表头 */}
+            <th scope="col" colSpan={2} style={headCellStyle}>{t('table.column.memory')}</th>
           </>
         )}
         row={(group, index) => {
           const sample = sampleByPid.get(group.key)
           const last = index === processGroups.length - 1
+          const owner = sample?.owner
+          const sessionLabel = owner === undefined ? '--' : owner.label ?? owner.sessionId
+          const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
             <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
               <td style={dataCellStyle} title={group.label}>
@@ -1034,8 +1129,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
               </td>
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? ''}</td>
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? ''}</td>
+              <td style={{ ...dataCellStyle, color: owner === undefined ? 'var(--dsw-alias-label-tertiary)' : undefined }} title={sessionLabel}>
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionLabel}</span>
+              </td>
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > PANEL_HIGH_LOAD_THRESHOLD)}
-              {valueCell(`${formatBytes(group.memoryBytes)} · ${formatPercent(group.memoryPercent)}`, group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD)}
+              {valueCell(formatBytes(group.memoryBytes), high)}
+              {valueCell(formatPercent(group.memoryPercent), high)}
             </tr>
           )
         }}
@@ -1058,7 +1157,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <col />
             <col style={{ width: PANEL_TABLE_SESSION_COUNT_WIDTH }} />
             <col style={{ width: PANEL_TABLE_CPU_WIDTH }} />
-            <col style={{ width: PANEL_TABLE_MEMORY_WIDTH }} />
+            <col style={{ width: PANEL_TABLE_MEMORY_VALUE_WIDTH }} />
+            <col style={{ width: PANEL_TABLE_MEMORY_PERCENT_WIDTH }} />
           </colgroup>
         )}
         headCells={(
@@ -1066,12 +1166,14 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <th scope="col" style={headCellStyle}>{t('session.column.session')}</th>
             <th scope="col" style={headCellStyle}>{t('session.column.processes')}</th>
             <th scope="col" style={headCellStyle}>{t('table.column.cpu')}</th>
-            <th scope="col" style={headCellStyle}>{t('table.column.memory')}</th>
+            {/* 内存拆为「具体数值 + 占比」两列,共用这一个表头 */}
+            <th scope="col" colSpan={2} style={headCellStyle}>{t('table.column.memory')}</th>
           </>
         )}
         row={(group, index) => {
           const last = index === sessionGroups.length - 1
           const label = group.note === undefined ? group.label : `${group.label} · ${group.note}`
+          const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
             <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
               <td style={dataCellStyle} title={label}>
@@ -1082,7 +1184,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
               </td>
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > PANEL_HIGH_LOAD_THRESHOLD)}
-              {valueCell(`${formatBytes(group.memoryBytes)} · ${formatPercent(group.memoryPercent)}`, group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD)}
+              {valueCell(formatBytes(group.memoryBytes), high)}
+              {valueCell(formatPercent(group.memoryPercent), high)}
             </tr>
           )
         }}

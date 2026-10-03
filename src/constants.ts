@@ -133,14 +133,30 @@ export const PANEL_PRIMARY_COLOR = 'var(--dsw-alias-brand-primary, var(--dsw-sta
 /** 资源占比条轨道底色(静态面色 token,不用交互态 hover token) */
 export const PANEL_SHARE_TRACK_COLOR = 'var(--dsw-alias-bg-layer-2, var(--dsw-alias-interactive-bg-hover))'
 
-/** 资源占比堆叠条高度(像素) */
-export const PANEL_SHARE_BAR_HEIGHT = 14
+/** 右端「空闲」泳道底色(淡灰;不用纯白,避免与卡片底色混淆) */
+export const PANEL_IDLE_COLOR = 'var(--dsw-alias-bg-layer-3, var(--dsw-alias-border-l1, #e5e6eb))'
 
-/** 资源占比堆叠条高度(像素,泳道内显示名称时;需容纳说明字号的名称条) */
-export const PANEL_SHARE_BAR_HEIGHT_NAMED = 22
+/** 占比条外边框宽度(像素) */
+export const PANEL_SHARE_BAR_BORDER_WIDTH = 1
 
-/** 泳道内名称条的留白(像素:文字两侧 + 与段边的内缩,用于判断名称是否放得下) */
-export const PANEL_SHARE_NAME_PADDING = 12
+/** 占比条外边框颜色(继承 profile web 的描边色) */
+export const PANEL_SHARE_BAR_BORDER_COLOR = 'var(--dsw-alias-border-l1)'
+
+/** 资源占比堆叠条高度(像素;含 1px 外边框) */
+export const PANEL_SHARE_BAR_HEIGHT = 18
+
+/**
+ * 资源占比堆叠条高度(泳道内显示名称时,像素)。
+ * 必须与 `PANEL_SHARE_BAR_HEIGHT` 相等:泳道高度恒定,不随名称开关跳动
+ * (名称本身无内外边距、行高压到 1,不会把行高带进泳道)。
+ */
+export const PANEL_SHARE_BAR_HEIGHT_NAMED = PANEL_SHARE_BAR_HEIGHT
+
+/**
+ * 泳道内名称的留白(像素,0 表示文字与段边之间不留空):
+ * 名称不参与段内外边距,避免其行高或内边距反过来影响泳道高度。
+ */
+export const PANEL_SHARE_NAME_PADDING = 0
 
 /**
  * 泳道内名称文字色的判定阈值:
@@ -209,8 +225,14 @@ export const PANEL_TABLE_PARENT_WIDTH = 72
 /** 进程表 CPU 列宽(像素,容纳 100.00% 于基准字号) */
 export const PANEL_TABLE_CPU_WIDTH = 76
 
-/** 进程表内存列宽(像素,容纳「999.99GB · 100.00%」于基准字号) */
-export const PANEL_TABLE_MEMORY_WIDTH = 168
+/** 进程表会话名称列宽(像素) */
+export const PANEL_TABLE_SESSION_WIDTH = 140
+
+/** 表格内存列拆分为两列:具体数值列宽(像素,容纳「999.99GB」于基准字号) */
+export const PANEL_TABLE_MEMORY_VALUE_WIDTH = 104
+
+/** 表格内存列拆分为两列:占比列宽(像素,容纳「100.00%」于基准字号) */
+export const PANEL_TABLE_MEMORY_PERCENT_WIDTH = 64
 
 /** 对话表进程数列宽(像素) */
 export const PANEL_TABLE_SESSION_COUNT_WIDTH = 64
