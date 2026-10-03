@@ -6,6 +6,8 @@
  * 作者:JularDepick
  */
 
+import type { PanelLayout } from '../constants'
+
 /** 进程句柄,用于标识一个可被监控的进程 */
 export interface ProcessHandle {
   /** 进程标识(平台进程号) */
@@ -93,6 +95,8 @@ export interface MachineTotals {
 export interface PanelOptions {
   /** 是否在占比条泳道内显示进程/对话名称(关闭后仅保留悬停提示) */
   laneNames: boolean
+  /** 面板布局:左右并列或上下同列 */
+  layout: PanelLayout
 }
 
 /** 面板展示快照 */

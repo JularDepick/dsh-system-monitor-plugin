@@ -23,15 +23,18 @@ import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   CLIENT_POLL_INTERVAL,
   DEFAULT_LANE_NAMES,
+  DEFAULT_PANEL_LAYOUT,
   MONITOR_DATA_PATH,
   PANEL_AUTHOR,
   PANEL_AUTHOR_URL,
   PANEL_BOTTOM_PADDING,
+  PANEL_CARDS_MIN_COLUMN_WIDTH,
   PANEL_CELL_PADDING_X,
   PANEL_CHART_LABEL_WIDTH,
   PANEL_COLUMN_GUTTER,
   PANEL_HIGH_LOAD_THRESHOLD,
   PANEL_LOCALE_NAMESPACE,
+  PANEL_MAX_WIDTH,
   PANEL_OTHERS_COLOR,
   PANEL_PROJECT_URL,
   PANEL_SERIES_COLORS,
@@ -47,6 +50,7 @@ import {
   PANEL_SHARE_NAME_PADDING,
   PANEL_SHARE_OTHERS_RATIO,
   PANEL_STACK_GAP,
+  PANEL_STORAGE_KEY,
   PANEL_SWATCH_SIZE,
   PANEL_TAB_ID,
   PANEL_TAB_ORDER,
@@ -59,6 +63,7 @@ import {
   PANEL_TYPOGRAPHY,
   PLUGIN_NAME,
 } from '../constants'
+import type { PanelLayout } from '../constants'
 import { panelDictionaries } from './i18n'
 import type { MonitorSnapshot, ResourceSample } from '../monitor/types'
 
@@ -249,6 +254,8 @@ const panelCss = `
 .sm-skeleton { background: linear-gradient(90deg, var(--dsw-alias-interactive-bg-hover) 25%, var(--dsw-alias-border-l1) 50%, var(--dsw-alias-interactive-bg-hover) 75%); background-size: 400% 100%; animation: sm-shimmer 1.4s ease-in-out infinite; }
 @keyframes sm-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .sm-skeleton { animation: none; } }
+/* 维度卡容器:可用宽度容得下两列时并排,否则纵向堆叠(纯 CSS 栅格,无需测量宽度) */
+.sm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(${PANEL_CARDS_MIN_COLUMN_WIDTH}px, 1fr)); gap: ${PANEL_STACK_GAP}px; align-items: start; }
 /* 面板根是纵向 flex 滚动容器:子块一律不参与压缩。
    卡片带 overflow:hidden,其 flex 自动最小尺寸按规范为 0,不锁死会被压扁并裁掉表格内容 */
 .sm-column > * { flex: none; }
@@ -257,11 +264,14 @@ const panelCss = `
 /**
  * 内容列:宿主视图区与滚动容器均无内边距(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致),
  * 间距与滚动兜底须由组件自带。
+ * 宽度取 tab 区域可用宽度(仅超宽屏按 PANEL_MAX_WIDTH 收窄),不再对齐宿主对话列宽,
+ * 否则在宽 tab 区域内会留下大片左右空白。
  * flex/minHeight/overflow 使宿主 composer-overlay 模式(视图区定高且 overflow:hidden)
  * 下面板自身成为滚动容器,长列表不会被裁掉。
  */
 const columnStyle: CSSProperties = {
-  maxWidth: `calc(var(--dsh-chat-content-width, 748px) + ${PANEL_COLUMN_GUTTER * 2}px)`,
+  width: '100%',
+  maxWidth: PANEL_MAX_WIDTH,
   margin: '0 auto',
   display: 'flex',
   flexDirection: 'column',
@@ -345,20 +355,99 @@ const laneCellStyle: CSSProperties = {
 }
 
 /**
- * 泳道内名称条。
- * 分段底色是彩色(明暗主题下取值不同),故名称不直接压在底色上,
- * 而用宿主浮层底色 + 主要文字色的小色块承载,保证任意分段色下都可读。
+ * 泳道内名称。
+ * 名称直接压在分段底色上(不加底色块),文字色由分段底色的相对亮度在黑与白之间取对比度更高者;
+ * 静态色 token 在明暗主题下取同一套取值,故按回退十六进制值判定即可。
  */
-const nameChipStyle: CSSProperties = {
+const nameTextStyle: CSSProperties = {
   maxWidth: '100%',
-  padding: '0 4px',
-  borderRadius: 3,
-  background: 'var(--dsw-alias-bg-overlay)',
-  color: 'var(--dsw-alias-label-primary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
   ...PANEL_TYPOGRAPHY.caption,
+}
+
+/** 从颜色 token 的回退十六进制值推出可读文字色(黑或白取对比度更高者) */
+function contrastTextColor(token: string): string {
+  const match = /#([0-9a-f]{6})/i.exec(token)
+  if (match === null) return 'var(--dsw-alias-label-primary)'
+  const value = Number.parseInt(match[1], 16)
+  const channel = (shift: number): number => {
+    const raw = ((value >> shift) & 0xff) / 255
+    return raw <= 0.03928 ? raw / 12.92 : ((raw + 0.055) / 1.055) ** 2.4
+  }
+  const luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+  const onWhite = 1.05 / (luminance + 0.05)
+  const onBlack = (luminance + 0.05) / 0.05
+  return onBlack >= onWhite ? '#111111' : '#ffffff'
+}
+
+/** 面板右上角的配置入口按钮 */
+const settingsButtonStyle: CSSProperties = {
+  flex: 'none',
+  padding: '1px 8px',
+  borderRadius: 999,
+  border: '1px solid var(--dsw-alias-border-l2)',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  cursor: 'pointer',
+  font: 'inherit',
+  whiteSpace: 'nowrap',
+  ...PANEL_TYPOGRAPHY.caption,
+}
+
+/** 配置子页里的开关控件 */
+function switchStyle(on: boolean): CSSProperties {
+  return {
+    minWidth: 64,
+    padding: '1px 10px',
+    borderRadius: 999,
+    border: `1px solid ${on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
+    background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-interactive-bg-hover)',
+    color: on ? 'var(--dsw-alias-brand-text, #ffffff)' : 'var(--dsw-alias-label-secondary)',
+    cursor: 'pointer',
+    font: 'inherit',
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
+    ...PANEL_TYPOGRAPHY.caption,
+  }
+}
+
+/** 面板本地偏好(未记录项为 null,沿用插件配置) */
+interface StoredPreferences {
+  /** 泳道内名称开关 */
+  laneNames: boolean | null
+  /** 面板布局 */
+  layout: PanelLayout | null
+}
+
+/** 读取浏览器端记住的偏好(不可用或未记录时各项为 null) */
+function readStoredPreferences(): StoredPreferences {
+  const empty: StoredPreferences = { laneNames: null, layout: null }
+  try {
+    if (typeof localStorage === 'undefined') return empty
+    const raw = localStorage.getItem(PANEL_STORAGE_KEY)
+    if (raw === null) return empty
+    const parsed = JSON.parse(raw) as { laneNames?: unknown; layout?: unknown }
+    return {
+      laneNames: typeof parsed.laneNames === 'boolean' ? parsed.laneNames : null,
+      layout: parsed.layout === 'side' || parsed.layout === 'stack' ? parsed.layout : null,
+    }
+  } catch {
+    return empty
+  }
+}
+
+/** 记录浏览器端偏好(不可用时静默:配置仍在本页生效) */
+function writeStoredPreferences(patch: Partial<StoredPreferences>): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    const raw = localStorage.getItem(PANEL_STORAGE_KEY)
+    const current = raw === null ? {} : (JSON.parse(raw) as Record<string, unknown>)
+    localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify({ ...current, ...patch }))
+  } catch {
+    // 无存储权限时忽略
+  }
 }
 
 /** 名称前配色标识块(与占比条分段同色,充当图例) */
@@ -430,9 +519,9 @@ function ShareTrack(props: {
   const othersFlex = `0 0 ${PANEL_SHARE_OTHERS_RATIO * 100}%`
   const dshFlex = `0 0 ${PANEL_SHARE_DSH_RATIO * 100}%`
   const idleFlex = `0 0 ${PANEL_SHARE_IDLE_RATIO * 100}%`
-  const named = (text: string, cellWidth: number): ReactNode =>
+  const named = (text: string, cellWidth: number, color: string): ReactNode =>
     props.names && labelFits(text, cellWidth, PANEL_SHARE_NAME_PADDING)
-      ? <span style={nameChipStyle}>{text}</span>
+      ? <span style={{ ...nameTextStyle, color }}>{text}</span>
       : null
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
@@ -452,7 +541,7 @@ function ShareTrack(props: {
       >
         {/* 左端泳道:与 dsh 无关的系统进程合计 */}
         <div title={`${othersName} ${othersText}`} style={{ flex: othersFlex, background: PANEL_OTHERS_COLOR, ...laneCellStyle }}>
-          {named(othersName, laneWidth(PANEL_SHARE_OTHERS_RATIO))}
+          {named(othersName, laneWidth(PANEL_SHARE_OTHERS_RATIO), contrastTextColor(PANEL_OTHERS_COLOR))}
         </div>
         {/* 中段泳道:dsh 及其子进程,按成员显示权重分段(最大者封顶 1/3,零占用成员保底占位) */}
         <div style={{ display: 'flex', flex: dshFlex, minWidth: 0 }}>
@@ -464,14 +553,14 @@ function ShareTrack(props: {
                 title={`${group.label} ${formatPercent(values[index])}`}
                 style={{ flexGrow: weights[index], flexBasis: 0, background: seriesColor(index), ...laneCellStyle }}
               >
-                {named(group.label, laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index])}
+                {named(group.label, laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index], contrastTextColor(seriesColor(index)))}
               </div>
             )
           })}
         </div>
         {/* 右端泳道:整机未被占用的资源(保持轨道底色) */}
         <div title={`${idleName} ${idleText}`} style={{ flex: idleFlex, ...laneCellStyle }}>
-          {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO))}
+          {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO), 'var(--dsw-alias-label-tertiary)')}
         </div>
       </div>
       {/* 段标签行:与三段同构,数值为占整机百分比,放不下则留空 */}
@@ -661,6 +750,17 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const { t } = props
   const [snapshot, setSnapshot] = useState<MonitorSnapshot | null>(null)
   const [unavailable, setUnavailable] = useState(false)
+  /** 配置子页是否展开 */
+  const [configOpen, setConfigOpen] = useState(false)
+  /** 面板本地偏好(泳道内名称、布局;null 表示本地未改过,沿用插件配置) */
+  const [preferences, setPreferences] = useState<StoredPreferences>(readStoredPreferences)
+
+  /** 配置入口按钮(面板右上角) */
+  const settingsButton = (
+    <button type="button" style={settingsButtonStyle} onClick={() => setConfigOpen((open) => !open)}>
+      {t('config.open')}
+    </button>
+  )
 
   useEffect(() => {
     let alive = true
@@ -699,6 +799,64 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     }
   }, [])
 
+  // 配置子页:展开期间按 ESC 关闭
+  useEffect(() => {
+    if (!configOpen || typeof window === 'undefined') return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setConfigOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [configOpen])
+
+  /** 是否在泳道内显示名称:本地偏好优先,其次插件配置,最后默认值 */
+  const laneNames = preferences.laneNames ?? snapshot?.panelOptions?.laneNames ?? DEFAULT_LANE_NAMES
+  /** 面板布局:本地偏好优先,其次插件配置,最后默认值 */
+  const layout: PanelLayout = preferences.layout ?? snapshot?.panelOptions?.layout ?? DEFAULT_PANEL_LAYOUT
+  /** 更新一项面板偏好(同时写入浏览器端存储) */
+  const setPreference = <K extends keyof StoredPreferences>(key: K, value: StoredPreferences[K]): void => {
+    setPreferences((current) => ({ ...current, [key]: value }))
+    writeStoredPreferences({ [key]: value } as Partial<StoredPreferences>)
+  }
+
+  /** 配置子页:面板内展开的配置视图,由右上角按钮呼起、ESC 或「关闭」收起 */
+  const configCard = (
+    <div style={cardStyle}>
+      <div style={cardHeadStyle}>
+        <span style={{ color: 'var(--dsw-alias-label-secondary)', ...PANEL_TYPOGRAPHY.baseStrong }}>{t('config.title')}</span>
+        <button type="button" style={settingsButtonStyle} onClick={() => setConfigOpen(false)}>
+          {t('config.close')}
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span style={{ color: 'var(--dsw-alias-label-primary)', ...PANEL_TYPOGRAPHY.base }}>{t('config.laneNames')}</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={laneNames}
+            style={switchStyle(laneNames)}
+            onClick={() => setPreference('laneNames', !laneNames)}
+          >
+            {laneNames ? t('config.on') : t('config.off')}
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span style={{ color: 'var(--dsw-alias-label-primary)', ...PANEL_TYPOGRAPHY.base }}>{t('config.layout')}</span>
+          <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
+            <button type="button" aria-pressed={layout === 'side'} style={switchStyle(layout === 'side')} onClick={() => setPreference('layout', 'side')}>
+              {t('config.layoutSide')}
+            </button>
+            <button type="button" aria-pressed={layout === 'stack'} style={switchStyle(layout === 'stack')} onClick={() => setPreference('layout', 'stack')}>
+              {t('config.layoutStack')}
+            </button>
+          </span>
+        </div>
+        <span style={{ color: 'var(--dsw-alias-label-tertiary)', ...PANEL_TYPOGRAPHY.caption }}>{t('config.hint')}</span>
+      </div>
+    </div>
+  )
+
   /**
    * 状态只保存「计算完成」的快照(采样时刻大于 0),故 snapshot 非空即可展示。
    * 占位响应不会写入状态:数据端点在首轮采集期间先等待计算完成,等待超时才返回占位快照,
@@ -710,6 +868,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   if (snapshot === null && !unavailable) {
     return (
       <div className="sm-column" style={columnStyle}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{settingsButton}</div>
         {[0, 1].map((index) => (
           <div key={index} className="sm-skeleton" style={{ height: 56, borderRadius: 12 }} />
         ))}
@@ -722,12 +881,14 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   if (!sampled) {
     return (
       <div className="sm-column" style={columnStyle}>
-        <div style={{ ...cardStyle, background: 'var(--dsw-alias-state-warn-tertiary)', padding: '8px 10px' }}>
+        <div style={{ ...cardStyle, background: 'var(--dsw-alias-state-warn-tertiary)', padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--dsw-alias-state-warn-label)', ...PANEL_TYPOGRAPHY.base }}>
             <StateDot state="warning" size={8} />
             {t('error.unavailable')}
           </span>
+          {settingsButton}
         </div>
+        {configOpen ? configCard : null}
         <style>{panelCss}</style>
       </div>
     )
@@ -745,8 +906,6 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     othersMemory: snapshot.totals.othersMemoryPercent,
     idleMemory: snapshot.totals.idleMemoryPercent,
   }
-  /** 是否在泳道内显示名称(来自插件配置;配置缺失时用默认值) */
-  const laneNames = snapshot.panelOptions?.laneNames ?? DEFAULT_LANE_NAMES
   const summary: { key: 'summary.sampledAt' | 'summary.platform' | 'summary.pollInterval' | 'summary.cpuCount' | 'summary.totalMemory' | 'summary.rootPid' | 'summary.others'; value: string }[] = [
     { key: 'summary.sampledAt', value: formatDateTime(snapshot.sampledAt) },
     { key: 'summary.platform', value: snapshot.platform || t('summary.platformUnknown') },
@@ -775,14 +934,18 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           </span>
           <span style={{ color: 'var(--dsw-alias-label-tertiary)', ...PANEL_TYPOGRAPHY.base }}>{t('stat.processes')}</span>
         </div>
-        {/* 旧快照仍在展示时,轮询失败以警示徽章标明数据已非最新 */}
-        {unavailable ? (
-          <StatusBadge tone="warn" label={t('stat.unavailable')} />
-        ) : snapshot.degraded ? (
-          <StatusBadge tone="warn" label={t('stat.degraded')} />
-        ) : (
-          <StatusBadge tone="ok" label={t('stat.normal')} />
-        )}
+        {/* 右侧成组:状态徽章与配置入口相邻,避免宽卡片下空间被均摊 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
+          {/* 旧快照仍在展示时,轮询失败以警示徽章标明数据已非最新 */}
+          {unavailable ? (
+            <StatusBadge tone="warn" label={t('stat.unavailable')} />
+          ) : snapshot.degraded ? (
+            <StatusBadge tone="warn" label={t('stat.degraded')} />
+          ) : (
+            <StatusBadge tone="ok" label={t('stat.normal')} />
+          )}
+          {settingsButton}
+        </div>
       </div>
       {/* 系统信息行 */}
       <div
@@ -801,6 +964,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           </span>
         ))}
       </div>
+      {/* 配置子页展开时替换维度卡;关闭时还原为响应式栅格 */}
+      {configOpen ? configCard : null}
+      <div
+        className="sm-cards"
+        style={{ display: configOpen ? 'none' : undefined, gridTemplateColumns: layout === 'stack' ? '1fr' : undefined }}
+      >
       {/* 进程维度卡 */}
       <DimensionCard
         title={t('table.title')}
@@ -895,6 +1064,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           )
         }}
       />
+      </div>
       {/* 页脚:项目与作者链接 */}
       <div style={{ color: 'var(--dsw-alias-label-caption)', textAlign: 'center', ...PANEL_TYPOGRAPHY.caption }}>
         <a href={PANEL_PROJECT_URL} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>

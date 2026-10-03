@@ -24,6 +24,17 @@ export const DEFAULT_POLL_INTERVAL = 1000
 /** 泳道内名称显示开关的默认值(开启;由插件配置投影到面板载荷) */
 export const DEFAULT_LANE_NAMES = true
 
+/**
+ * 面板布局:左右并列(宽屏两列,窄屏自动退回单列)与上下同列(始终单列堆叠)
+ */
+export type PanelLayout = 'side' | 'stack'
+
+/** 面板布局默认值(左右并列) */
+export const DEFAULT_PANEL_LAYOUT: PanelLayout = 'side'
+
+/** 面板本地偏好存储键(浏览器端记住用户在同页配置里的选择) */
+export const PANEL_STORAGE_KEY = 'dsh-system-monitor:preferences'
+
 /** Agent 汇报进程句柄的工具名称 */
 export const REPORT_TOOL_NAME = 'system_monitor_report'
 
@@ -69,6 +80,12 @@ export const PANEL_HIGH_LOAD_THRESHOLD = 90
 
 /** 面板内容区左右内边距(像素;宿主视图区不提供内边距,窗口窄于内容列宽时由它兜底留白) */
 export const PANEL_COLUMN_GUTTER = 16
+
+/** 面板内容最大宽度(像素):tab 区域内尽量用满可用宽度,仅在超宽屏上收窄以免表格与占比条过度拉伸 */
+export const PANEL_MAX_WIDTH = 1440
+
+/** 维度卡的栅格最小列宽(像素):可用宽度容得下两列时两张维度卡并排,否则纵向堆叠 */
+export const PANEL_CARDS_MIN_COLUMN_WIDTH = 460
 
 /** 面板顶部内边距(像素;分隔宿主标签栏下边框) */
 export const PANEL_TOP_PADDING = 16
