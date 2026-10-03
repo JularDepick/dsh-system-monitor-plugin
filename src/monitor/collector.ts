@@ -42,8 +42,8 @@ function runPowershell(script: string): Promise<string> {
   })
 }
 
-/** 解析 PowerShell 输出的 JSON 进程列表(单对象时包装为数组) */
-function parseRecords(text: string): ProcessRecord[] {
+/** 解析 PowerShell 输出的 JSON 进程列表(单对象时包装为数组;导出以便纯函数测试) */
+export function parseRecords(text: string): ProcessRecord[] {
   const data = JSON.parse(text) as unknown
   const list = Array.isArray(data) ? data : [data]
   return list
@@ -190,8 +190,8 @@ function runPs(args: readonly string[]): Promise<string> {
   })
 }
 
-/** 解析 ps 的累计 CPU 时间字段([[dd-]hh:]mm:ss)为秒 */
-function parseCpuSeconds(text: string): number {
+/** 解析 ps 的累计 CPU 时间字段([[dd-]hh:]mm:ss)为秒(导出以便纯函数测试) */
+export function parseCpuSeconds(text: string): number {
   const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(text.trim())
   if (match === null) return 0
   const days = Number(match[1] ?? 0)
@@ -202,15 +202,16 @@ function parseCpuSeconds(text: string): number {
 }
 
 /**
- * 解析 macOS ps 输出:字段顺序由调用方给定,名称固定放在最后
- * (进程名可能含空格,故按字段数切开、余下整段作为名称)。
+ * 解析 macOS ps 输出:字段顺序由调用方给定,名称固定放在最后。
+ * 注意不能用 `split(sep, limit)` 取名称——它只截断元素个数,余下内容会被丢弃;
+ * 故先整行按空白切开,再把布局字段之后的余下字段拼回名称(进程名可含空格)。
  */
-function parsePsRecords(text: string, layout: readonly ('pid' | 'ppid' | 'time' | 'rss')[]): ProcessRecord[] {
+export function parsePsRecords(text: string, layout: readonly ('pid' | 'ppid' | 'time' | 'rss')[]): ProcessRecord[] {
   const records: ProcessRecord[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (trimmed.length === 0) continue
-    const fields = trimmed.split(/\s+/, layout.length + 1)
+    const fields = trimmed.split(/\s+/)
     if (fields.length <= layout.length) continue
     const pid = Number(fields[0])
     if (!Number.isInteger(pid) || pid <= 0) continue
@@ -232,7 +233,7 @@ function parsePsRecords(text: string, layout: readonly ('pid' | 'ppid' | 'time' 
     records.push({
       pid,
       parentPid,
-      name: fields[layout.length].trim() || String(pid),
+      name: fields.slice(layout.length).join(' ') || String(pid),
       cpuSeconds,
       workingSetBytes,
     })
