@@ -8,6 +8,7 @@
 
 import type { CpuScope, PanelColumns } from '../constants'
 import type { HistoryPoint } from './history'
+import type { ToolWindow } from './tool-window'
 
 /** 进程句柄,用于标识一个可被监控的进程 */
 export interface ProcessHandle {
@@ -17,21 +18,21 @@ export interface ProcessHandle {
   name?: string
   /** 父进程标识(可选,用于表达树形关系) */
   parentPid?: number
-  /** 所属会话标识(可选,由 Agent 汇报时显式标注,用于对话维度分组) */
+  /** 所属会话标识(可选,由 Agent 汇报时显式标注,用于会话维度分组) */
   sessionId?: string
 }
 
 /**
- * 进程归属:标识该进程属于哪个对话(会话)。
+ * 进程归属:标识该进程属于哪个会话(会话)。
  * 归属来源见 `attribution.ts`(子进程环境、终端 pid 映射、Agent 汇报),
  * 仅用于面板分组展示,不改变资源采样口径。
  */
 export interface ProcessOwner {
-  /** 会话标识(对话维度分组键) */
+  /** 会话标识(会话维度分组键) */
   sessionId: string
   /** 会话显示名(宿主会话标题;缺失时面板显示会话标识) */
   label?: string
-  /** 是否由子会话(subagent)派生 */
+  /** 是否由子代理(subagent)派生 */
   subagent?: boolean
 }
 
@@ -99,12 +100,14 @@ export interface MachineTotals {
  * 配置改动经宿主设置页写回插件配置后,随下一次轮询的载荷生效。
  */
 export interface PanelOptions {
-  /** 是否在占比条泳道内显示进程/对话名称(关闭后仅保留悬停提示) */
+  /** 是否在占比条泳道内显示进程/会话名称(关闭后仅保留悬停提示) */
   laneNames: boolean
   /** 面板视图列数:单列或双列 */
   columns: PanelColumns
   /** CPU 展示口径:整机或单核(仅影响面板展示换算,采集口径不变) */
   cpuScope: CpuScope
+  /** 列表行留存轮数(连续未采样达到该轮数即从面板移除该行) */
+  retainRounds: number
 }
 
 /** 面板展示快照 */
@@ -140,6 +143,11 @@ export interface MonitorSnapshot {
   history: HistoryPoint[]
   /** 面板展示选项(泳道内名称开关等;缺失时客户端按默认值处理) */
   panelOptions?: PanelOptions
+  /**
+   * 工具调用时间窗(由面板数据端点注入,不在采集器快照内;按开始时刻升序)。
+   * 面板据此在趋势线上标注工具调用区间;缺失时客户端不画标注。
+   */
+  toolWindows?: ToolWindow[]
   /**
    * 无采样时的失败原因(仅数据端点在采集器尚未产出快照时携带)。
    * 携带该项即表示 `sampledAt` 为 0、其余指标均为占位值,面板不得当作有效数据展示。

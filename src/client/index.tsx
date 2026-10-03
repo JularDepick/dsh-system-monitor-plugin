@@ -3,7 +3,7 @@
  *
  * 经 conversation.view 槽注册浏览器端面板组件,
  * 通过 host webserver 数据端点同源轮询快照并展示。
- * 面板按两个维度各占一张卡:进程维度(dsh 进程树逐进程)与对话维度(按会话归并)。
+ * 面板按两个维度各占一张卡:进程维度(dsh 进程树逐进程)与会话维度(按会话归并)。
  * 两张卡的资源占比条形状一致,为三段固定泳道:
  * 左端「其他应用」(与 dsh 无关的系统进程合计)、中段「dsh 及其子进程」(按成员相对占比分段)、
  * 右端「空闲」(整机未被占用);三段宽度固定,占用数值由各段标签给出(占整机百分比,精确到 0.01%),
@@ -19,16 +19,18 @@ import type { PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // 类型面:ctx.slots 服务的 Context 合并(slots 服务由 ui-renderer 提供)
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, SegmentedControl, StateDot, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCloseOutlineRegular, SegmentedControl, StateDot, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   CLIENT_POLL_INTERVAL,
   DEFAULT_CPU_SCOPE,
   DEFAULT_LANE_NAMES,
   DEFAULT_PANEL_COLUMNS,
+  DEFAULT_RETAIN_ROUNDS,
   MONITOR_DATA_PATH,
   PANEL_AUTHOR,
   PANEL_AUTHOR_URL,
   PANEL_BOTTOM_PADDING,
+  PANEL_CARD_HEAD_COLOR,
   PANEL_CARDS_DOUBLE_MIN_WIDTH,
   PANEL_CELL_PADDING_X,
   PANEL_CHART_LABEL_WIDTH,
@@ -46,7 +48,9 @@ import {
   PANEL_SHARE_BAR_BORDER_WIDTH,
   PANEL_SHARE_BAR_HEIGHT,
   PANEL_SHARE_BAR_HEIGHT_NAMED,
+  PANEL_SETTINGS_REGION_ID,
   PANEL_SHARE_DSH_RATIO,
+  PANEL_SHARE_EMPTY_COLOR,
   PANEL_SHARE_IDLE_RATIO,
   PANEL_SHARE_LABEL_CHAR_WIDTH,
   PANEL_SHARE_LABEL_PADDING,
@@ -66,6 +70,7 @@ import {
   PANEL_TABLE_MEMORY_PERCENT_WIDTH,
   PANEL_TABLE_MEMORY_VALUE_WIDTH,
   PANEL_TABLE_NAME_MIN_WIDTH,
+  PANEL_TABLE_OPTIONAL_COLUMNS,
   PANEL_TABLE_PARENT_WIDTH,
   PANEL_TABLE_PID_WIDTH,
   PANEL_TABLE_SESSION_COUNT_WIDTH,
@@ -73,14 +78,23 @@ import {
   PANEL_TEXT_CJK_WIDTH,
   PANEL_HISTORY_DASH,
   PANEL_HISTORY_HEIGHT,
+  PANEL_TOOL_MARK_COLOR,
+  PANEL_TOOL_MARK_MIN_WIDTH,
   PANEL_TOP_PADDING,
   PANEL_TYPOGRAPHY,
   PLUGIN_NAME,
 } from '../constants'
-import type { CpuScope, PanelColumns } from '../constants'
+import type { CpuScope, PanelColumns, PanelTableColumn } from '../constants'
 import { panelDictionaries } from './i18n'
+import type { PanelTextKey } from './i18n'
 import { cpuDisplayFactor, normalizeCpuScope, scaleCpuPercent } from '../monitor/cpu-scope'
+import { formatPercent } from '../monitor/format'
 import { historyPolyline, historySummary } from '../monitor/history'
+import { normalizeTableSort, sortRows } from '../monitor/table-sort'
+import type { TableSort } from '../monitor/table-sort'
+import { toolWindowMarks } from '../monitor/tool-window'
+import { RowRetention } from '../monitor/retention'
+import type { RetainedRow } from '../monitor/retention'
 import type { MonitorSnapshot, ResourceSample } from '../monitor/types'
 
 /** 框架注入的面板文案翻译函数(locale 座位) */
@@ -89,13 +103,13 @@ type PanelTranslate = TranslateNS<typeof PANEL_LOCALE_NAMESPACE>
 /** 面板组件 props:会话视图运行时座位 + locale 座位 */
 type MonitorTabProps = PropsRuntime<'conversation.view'> & { t: PanelTranslate }
 
-/** 分组表与占比条的一项(进程维度为单个进程,对话维度为一个会话/宿主/未归因) */
+/** 分组表与占比条的一项(进程维度为单个进程,会话维度为一个会话/宿主/未归因) */
 interface ShareGroup {
-  /** 分组键(进程维度为 pid,对话维度为会话标识或保留键) */
+  /** 分组键(进程维度为 pid,会话维度为会话标识或保留键) */
   key: string
   /** 显示名 */
   label: string
-  /** 附加标注(如子会话) */
+  /** 附加标注(如子代理) */
   note?: string
   /** CPU 占用率(百分比,绝对量) */
   cpuPercent: number
@@ -107,6 +121,11 @@ interface ShareGroup {
   count: number
   /** 是否为主进程/宿主分组:固定用品牌蓝,不参与系列色轮转 */
   primary?: boolean
+  /**
+   * 粘性身份键(进程按名称,会话按会话标识):行留存按它记账,
+   * 缺席时按同一身份归零保留;缺省时退回 `key`。
+   */
+  stickyKey?: string
 }
 
 /** 表格列定义:表头单元(由前一列 colSpan 覆盖时为 null)与内容自适应宽度 */
@@ -171,11 +190,6 @@ function formatBytes(bytes: number): string {
   const megabytes = kilobytes / 1024
   if (megabytes < 1024) return `${megabytes.toFixed(2)}MB`
   return `${(megabytes / 1024).toFixed(2)}GB`
-}
-
-/** 百分比字符串(精确到 0.01%) */
-function formatPercent(value: number): string {
-  return `${value.toFixed(2)}%`
 }
 
 /** 第 index 个分段的分段配色(超出配色表长度后循环) */
@@ -250,6 +264,14 @@ function displayName(sample: ResourceSample): string {
 }
 
 /**
+ * 未采样行:值全部归零,保留身份信息(名称/会话标识)以便识别是哪一行。
+ * 这类行仍在留存期内(连续未采样未达阈值),归零后继续显示,而不是从列表消失。
+ */
+function zeroedGroup(group: ShareGroup): ShareGroup {
+  return { ...group, cpuPercent: 0, memoryPercent: 0, memoryBytes: 0, count: 0 }
+}
+
+/**
  * 中段各成员的显示宽度权重(合计为 1)。
  * 判定与分配都按该维度全部成员进行,使 CPU 与内存两行口径一致:
  * 只有一个成员时允许它独占中段;多个成员时每个成员先取保底宽度,
@@ -288,6 +310,8 @@ function groupByProcess(processes: readonly ResourceSample[], rootPid: number, c
   return processes.map((sample) => ({
     key: String(sample.handle.pid),
     label: displayName(sample),
+    // 行留存按进程名称记账:同名进程重启(pid 变化)后仍接着原行的计数
+    stickyKey: displayName(sample),
     ...(sample.handle.pid === rootPid ? { primary: true } : {}),
     // 采集值为整机口径,按展示口径换算(单核口径下超过 100% 属正常)
     cpuPercent: scaleCpuPercent(sample.cpuPercent, cpuFactor),
@@ -298,7 +322,7 @@ function groupByProcess(processes: readonly ResourceSample[], rootPid: number, c
 }
 
 /**
- * 对话维度分组:按会话归并成员进程;
+ * 会话维度分组:按会话归并成员进程;
  * 宿主进程与无归属进程各成一组并置于末尾(宿主承载全部会话,不并入任何一个会话)。
  */
 function groupBySession(
@@ -361,12 +385,14 @@ const panelCss = `
 @media (prefers-reduced-motion: reduce) { .sm-skeleton { animation: none; } }
 /* 维度卡容器:可用宽度容得下两列时并排,否则纵向堆叠(纯 CSS 栅格,无需测量宽度) */
 .sm-cards { display: grid; gap: ${PANEL_STACK_GAP}px; align-items: start; }
-/* 维度卡头部:可点击折叠(标题即折叠开关),悬停用宿主交互底色提示可点 */
-.sm-card-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.sm-card-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
+/* 维度卡头部:浅灰底把标题行与卡片正文分开;整行可点折叠,悬停在同一底色上叠一层交互底色 */
+.sm-card-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; background: ${PANEL_CARD_HEAD_COLOR}; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.sm-card-head:hover { background: linear-gradient(var(--dsw-alias-interactive-bg-active), var(--dsw-alias-interactive-bg-active)), ${PANEL_CARD_HEAD_COLOR}; }
 /* 面板根是纵向 flex 滚动容器:子块一律不参与压缩。
    卡片带 overflow:hidden,其 flex 自动最小尺寸按规范为 0,不锁死会被压扁并裁掉表格内容 */
 .sm-column > * { flex: none; }
+/* 仅读屏可见的文本(状态播报等):视觉上不占位,但仍进入无障碍树 */
+.sm-sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 `
 
 /**
@@ -527,6 +553,14 @@ type PanelCardId = (typeof PANEL_CARD_IDS)[number]
 /** 各卡折叠状态(true 为已折叠;缺失表示默认展开) */
 type PanelCollapsed = Partial<Record<PanelCardId, boolean>>
 
+/** 可隐藏列标识 → 文案键(设置子页逐列开关与表头共用同一术语) */
+const COLUMN_LABEL_KEYS: Record<PanelTableColumn, PanelTextKey> = {
+  pid: 'config.columnPid',
+  parent: 'config.columnParent',
+  session: 'config.columnSession',
+  memoryPercent: 'config.columnMemoryPercent',
+}
+
 /** 面板本地偏好(未记录项为 null,沿用插件配置) */
 interface StoredPreferences {
   /** 泳道内名称开关 */
@@ -537,6 +571,22 @@ interface StoredPreferences {
   collapsed: PanelCollapsed | null
   /** CPU 展示口径(整机或单核) */
   cpuScope: CpuScope | null
+  /** 明细表排序方式 */
+  tableSort: TableSort | null
+  /** 明细表隐藏的可选列(空集表示全部显示) */
+  hiddenColumns: PanelTableColumn[] | null
+}
+
+/** 归一化隐藏列:只接受已知列标识,去重后为空则视为全部显示 */
+function normalizeHiddenColumns(value: unknown): PanelTableColumn[] | null {
+  if (!Array.isArray(value)) return null
+  const result: PanelTableColumn[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const column = PANEL_TABLE_OPTIONAL_COLUMNS.find((known) => known === item)
+    if (column !== undefined && !result.includes(column)) result.push(column)
+  }
+  return result.length > 0 ? result : null
 }
 
 /** 归一化折叠状态:只接受已知卡片标识的布尔值,其余丢弃 */
@@ -552,17 +602,26 @@ function normalizeCollapsed(value: unknown): PanelCollapsed | null {
 
 /** 读取浏览器端记住的偏好(不可用或未记录时各项为 null) */
 function readStoredPreferences(): StoredPreferences {
-  const empty: StoredPreferences = { laneNames: null, columns: null, collapsed: null, cpuScope: null }
+  const empty: StoredPreferences = { laneNames: null, columns: null, collapsed: null, cpuScope: null, tableSort: null, hiddenColumns: null }
   try {
     if (typeof localStorage === 'undefined') return empty
     const raw = localStorage.getItem(PANEL_STORAGE_KEY)
     if (raw === null) return empty
-    const parsed = JSON.parse(raw) as { laneNames?: unknown; columns?: unknown; collapsed?: unknown; cpuScope?: unknown }
+    const parsed = JSON.parse(raw) as {
+      laneNames?: unknown
+      columns?: unknown
+      collapsed?: unknown
+      cpuScope?: unknown
+      tableSort?: unknown
+      hiddenColumns?: unknown
+    }
     return {
       laneNames: typeof parsed.laneNames === 'boolean' ? parsed.laneNames : null,
       columns: parsed.columns === 1 || parsed.columns === 2 ? parsed.columns : null,
       collapsed: normalizeCollapsed(parsed.collapsed),
       cpuScope: normalizeCpuScope(parsed.cpuScope),
+      tableSort: parsed.tableSort === undefined || parsed.tableSort === null ? null : normalizeTableSort(parsed.tableSort),
+      hiddenColumns: normalizeHiddenColumns(parsed.hiddenColumns),
     }
   } catch {
     return empty
@@ -581,10 +640,11 @@ function writeStoredPreferences(patch: Partial<StoredPreferences>): void {
   }
 }
 
-/** 名称前配色标识块(与占比条分段同色,充当图例) */
+/** 名称前配色标识块(与占比条分段同色,充当图例);纯装饰,对读屏隐藏 */
 function Swatch(props: { color: string }): ReactNode {
   return (
     <span
+      aria-hidden="true"
       style={{
         width: PANEL_SWATCH_SIZE,
         height: PANEL_SWATCH_SIZE,
@@ -626,7 +686,7 @@ function StatusBadge(props: { tone: 'ok' | 'warn' | 'error'; label: string }): R
  * 资源占比条(单行):三段固定宽度泳道。
  * 左端「其他应用」为与 dsh 无关的系统进程合计,中段为 dsh 及其子进程(按成员相对占比分段),
  * 右端「空闲」为整机未被占用部分;三段宽度都不随真实占用变化,占用数值由段标签给出。
- * 开启「泳道内名称」时,各段内部居中显示对应名称(进程名/对话名;两端显示泳道名),
+ * 开启「泳道内名称」时,各段内部居中显示对应名称(进程名/会话名;两端显示泳道名),
  * 放不下则留空并只保留悬停提示。
  */
 function ShareTrack(props: {
@@ -684,8 +744,17 @@ function ShareTrack(props: {
         <div title={`${othersName} ${othersCandidates[0]}`} style={{ flex: othersFlex, background: PANEL_OTHERS_COLOR, ...laneCellStyle }}>
           {named(othersName, laneWidth(PANEL_SHARE_OTHERS_RATIO), contrastTextColor(PANEL_OTHERS_COLOR))}
         </div>
-        {/* 中段泳道:dsh 及其子进程,按成员显示权重分段(最大者封顶 1/3,零占用成员保底占位) */}
-        <div style={{ display: 'flex', flex: dshFlex, minWidth: 0 }}>
+        {/* 中段泳道:dsh 及其子进程,按成员显示权重分段(最大者封顶 1/3,零占用成员保底占位);
+            无成员时铺灰暗占位并给兜底悬停提示,避免中段露出空白 */}
+        <div
+          title={props.groups.length === 0 ? props.t('chart.noMembers') : undefined}
+          style={{
+            display: 'flex',
+            flex: dshFlex,
+            minWidth: 0,
+            ...(props.groups.length === 0 ? { background: PANEL_SHARE_EMPTY_COLOR } : {}),
+          }}
+        >
           {props.groups.map((group, index) => {
             if (weights[index] <= 0) return null
             return (
@@ -814,7 +883,9 @@ function DimensionCard(props: {
   names: boolean
   t: PanelTranslate
   columns: readonly PanelColumn[]
-  row: (group: ShareGroup, index: number) => ReactNode
+  row: (group: ShareGroup, index: number, sampled: boolean) => ReactNode
+  /** 每行本轮是否采样到(与 `groups` 同序;缺省视为全部采样到) */
+  sampled?: readonly boolean[]
   emptyText: string
   ariaLabel: string
   /** 卡片内容(泳道图 + 明细表)是否展开:由上层持有,便于把折叠状态写进本地偏好 */
@@ -942,7 +1013,7 @@ function DimensionCard(props: {
               ))}
             </tr>
           </thead>
-          <tbody>{props.groups.map((group, index) => props.row(group, index))}</tbody>
+          <tbody>{props.groups.map((group, index) => props.row(group, index, props.sampled?.[index] ?? true))}</tbody>
         </table>
           )}
         </>
@@ -961,11 +1032,34 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   /** 面板本地偏好(泳道内名称、布局;null 表示本地未改过,沿用插件配置) */
   const [preferences, setPreferences] = useState<StoredPreferences>(readStoredPreferences)
 
-  /** 配置入口按钮(面板右上角;用宿主官方按钮,配色继承当前 profile) */
+  /**
+   * 配置入口按钮(面板右上角;用宿主官方按钮,配色继承当前 profile)。
+   * 无障碍:声明弹出关系与展开状态;收起后焦点回到该按钮(见下方的焦点管理副作用)。
+   */
   const settingsButton = (
-    <Button variant="ghost" size="sm" onClick={() => setConfigOpen((open) => !open)}>
+    <Button variant="ghost" size="sm" aria-expanded={configOpen} aria-controls={PANEL_SETTINGS_REGION_ID} onClick={() => setConfigOpen((open) => !open)}>
       {t('config.open')}
     </Button>
+  )
+  /** 配置入口的焦点锚点:官方 Button 不便透传 ref,故按容器取内部按钮回焦 */
+  const settingsAnchorRef = useRef<HTMLSpanElement | null>(null)
+  const settingsRegionRef = useRef<HTMLDivElement | null>(null)
+  const configWasOpen = useRef(false)
+  useEffect(() => {
+    if (configOpen) {
+      // 展开时把焦点移入子页,键盘用户不必再 Tab 一圈找控件
+      settingsRegionRef.current?.focus()
+    } else if (configWasOpen.current) {
+      // 收起时(含 ESC 与 关闭 按钮)焦点回到入口按钮,避免焦点落在已卸载的节点上
+      settingsAnchorRef.current?.querySelector('button')?.focus()
+    }
+    configWasOpen.current = configOpen
+  }, [configOpen])
+  /** 配置入口的焦点锚点容器(三个渲染分支共用同一入口) */
+  const settingsAnchor = (
+    <span ref={settingsAnchorRef} style={{ display: 'inline-flex' }}>
+      {settingsButton}
+    </span>
   )
 
   useEffect(() => {
@@ -1036,6 +1130,16 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const toggleCard = (id: PanelCardId): void => {
     setPreference('collapsed', { ...collapsed, [id]: collapsed[id] !== true })
   }
+  /** 明细表排序方式(本地偏好;默认保留采集顺序) */
+  const tableSort: TableSort = preferences.tableSort ?? 'default'
+  /** 明细表隐藏的可选列(名称列与 CPU 列恒显示,不在此列) */
+  const hiddenColumns = preferences.hiddenColumns ?? []
+  /** 某可选列当前是否可见 */
+  const columnVisible = (id: PanelTableColumn): boolean => !hiddenColumns.includes(id)
+  /** 切换某可选列的显示与隐藏并写入本地偏好 */
+  const toggleColumn = (id: PanelTableColumn): void => {
+    setPreference('hiddenColumns', columnVisible(id) ? [...hiddenColumns, id] : hiddenColumns.filter((item) => item !== id))
+  }
 
   /**
    * 导出反馈状态:空闲 / 已复制 / 复制失败。
@@ -1048,6 +1152,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
 
   /** 卡片栅格实测宽度(用于双列窄屏回退;配置子页展开时栅格隐藏,收起后重新测量) */
   const [cardsWidth, setCardsWidth] = useState(0)
+  /**
+   * 行留存的重新渲染计数:手动移除一行时留存状态在 ref 上就地更新,
+   * 用一个只增不减的计数触发重渲染(不参与渲染结果)。
+   */
+  const [, setRetentionTick] = useState(0)
   const cardsRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const element = cardsRef.current
@@ -1066,7 +1175,14 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 设置行收在 PANEL_SETTINGS_WIDTH 内,避免宽卡片下标签与控件相距过远。
    */
   const configCard = (
-    <div style={cardStyle}>
+    <div
+      ref={settingsRegionRef}
+      id={PANEL_SETTINGS_REGION_ID}
+      role="region"
+      aria-label={t('config.title')}
+      tabIndex={-1}
+      style={cardStyle}
+    >
       <div style={cardHeadStyle}>
         <span style={{ color: 'var(--dsw-alias-label-secondary)', ...PANEL_TYPOGRAPHY.baseStrong }}>{t('config.title')}</span>
         <Button variant="ghost" size="sm" onClick={() => setConfigOpen(false)}>
@@ -1105,6 +1221,36 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           />
         </div>
         <div style={settingsRowStyle}>
+          <span style={settingsLabelStyle}>{t('config.tableSort')}</span>
+          <SegmentedControl
+            id="sm-table-sort"
+            value={tableSort}
+            options={[
+              { value: 'default', label: t('config.sortDefault') },
+              { value: 'cpu', label: t('config.sortCpu') },
+              { value: 'memory', label: t('config.sortMemory') },
+              { value: 'name', label: t('config.sortName') },
+            ]}
+            onChange={(next) => setPreference('tableSort', normalizeTableSort(next))}
+            label={t('config.tableSort')}
+          />
+        </div>
+        <div style={settingsRowStyle}>
+          <span style={settingsLabelStyle}>{t('config.showColumns')}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {PANEL_TABLE_OPTIONAL_COLUMNS.map((id) => (
+              <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--dsw-alias-label-tertiary)', ...PANEL_TYPOGRAPHY.caption }}>{t(COLUMN_LABEL_KEYS[id])}</span>
+                <Switch
+                  checked={columnVisible(id)}
+                  onChange={() => toggleColumn(id)}
+                  label={t(COLUMN_LABEL_KEYS[id])}
+                />
+              </span>
+            ))}
+          </div>
+        </div>
+        <div style={settingsRowStyle}>
           <span style={settingsLabelStyle}>{t('config.export')}</span>
           <Button variant="ghost" size="sm" onClick={() => { void copySnapshot() }}>
             {exportState === 'copied' ? t('config.exported') : exportState === 'failed' ? t('config.exportFailed') : t('config.export')}
@@ -1121,12 +1267,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 此时界面要么保持加载态、要么继续显示既有内容,不会出现 1970 年采样时间与全 0 指标。
    */
   const sampled = snapshot !== null
-
   // 加载中:骨架屏占位
   if (snapshot === null && !unavailable) {
     return (
       <div className="sm-column" style={columnStyle}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{settingsButton}</div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{settingsAnchor}</div>
         {[0, 1].map((index) => (
           <div key={index} className="sm-skeleton" style={{ height: 56, borderRadius: 12 }} />
         ))}
@@ -1139,12 +1284,15 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   if (!sampled) {
     return (
       <div className="sm-column" style={columnStyle}>
-        <div style={{ ...cardStyle, background: 'var(--dsw-alias-state-warn-tertiary)', padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div
+          role="alert"
+          style={{ ...cardStyle, background: 'var(--dsw-alias-state-warn-tertiary)', padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
+        >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--dsw-alias-state-warn-label)', ...PANEL_TYPOGRAPHY.base }}>
             <StateDot state="warning" size={8} />
             {t('error.unavailable')}
           </span>
-          {settingsButton}
+          {settingsAnchor}
         </div>
         {configOpen ? configCard : null}
         <style>{panelCss}</style>
@@ -1153,18 +1301,18 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   }
 
   const processes = snapshot.processes
-  const processGroups = groupByProcess(processes, snapshot.rootPid, cpuFactor)
-  const sessionGroups = groupBySession(processes, snapshot.rootPid, t, cpuFactor)
-  /** 对话卡计数只数真实会话:宿主与未归因是补充行,不计入对话数(卡片与导出共用同一口径) */
-  const sessionCount = sessionGroups.filter(
-    (group) => group.key !== HOST_GROUP_KEY && group.key !== UNATTRIBUTED_GROUP_KEY,
-  ).length
+  /** 状态文案与语气:徽章与读屏播报共用同一口径,避免两处判定漂移 */
+  const statusLabel = unavailable ? t('stat.unavailable') : snapshot.degraded ? t('stat.degraded') : t('stat.normal')
+  const statusTone: 'ok' | 'warn' = unavailable || snapshot.degraded ? 'warn' : 'ok'
+  // 本轮采样到的分组(留存前的原始结果)
+  const sampledProcessGroups = groupByProcess(processes, snapshot.rootPid, cpuFactor)
+  const sampledSessionGroups = groupBySession(processes, snapshot.rootPid, t, cpuFactor)
   /**
-   * 子会话维度:只取归属为子会话(subagent 派生)的进程,按会话分组。
-   * 子会话开销常被父会话掩盖,单独成卡后其资源占用不再分散在对话卡的多行里;
-   * 过滤后不会出现宿主与未归因组(样本本身已被过滤掉),故分组结果只有子会话。
+   * 子代理维度:只取归属为子代理(subagent 派生)的进程,按会话分组。
+   * 子代理开销常被父会话掩盖,单独成卡后其资源占用不再分散在会话卡的多行里;
+   * 过滤后不会出现宿主与未归因组(样本本身已被过滤掉),故分组结果只有子代理。
    */
-  const subagentGroups = groupBySession(
+  const sampledSubagentGroups = groupBySession(
     processes.filter((sample) => sample.owner?.subagent === true),
     snapshot.rootPid,
     t,
@@ -1181,15 +1329,108 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     currentSessionId.length === 0
       ? []
       : processes.filter((sample) => sample.owner !== undefined && sample.owner.sessionId === currentSessionId)
-  const currentSessionGroups = groupByProcess(currentSessionProcesses, snapshot.rootPid, cpuFactor)
+  const sampledCurrentSessionGroups = groupByProcess(currentSessionProcesses, snapshot.rootPid, cpuFactor)
+
+  /**
+   * 表格排序:在留存之前对「本轮采样到的行」排序(未采样行按留存顺序附在其后),
+   * 故明细表与占比条泳道共用同一顺序;宿主与未归因行保持固定位置(宿主最前,未归因最后)。
+   */
+  const applySort = (groups: ShareGroup[]): ShareGroup[] => {
+    if (tableSort === 'default') return groups
+    const pinned = (group: ShareGroup): number =>
+      group.key === HOST_GROUP_KEY ? -1 : group.key === UNATTRIBUTED_GROUP_KEY ? 1 : 0
+    if (tableSort === 'name') return sortRows(groups, (a, b) => a.label.localeCompare(b.label), pinned)
+    const weight = tableSort === 'cpu'
+      ? (group: ShareGroup): number => group.cpuPercent
+      : (group: ShareGroup): number => group.memoryBytes
+    return sortRows(groups, (a, b) => weight(b) - weight(a), pinned)
+  }
+
+  /**
+   * 行留存:采样过的身份(进程按名称,会话按会话标识)在后续某轮没采样到时不移除,
+   * 该行以零值继续显示;连续未采样达到 `retainRounds` 轮才从列表移除;
+   * 手动移除只作用于本页面内存,该身份再次被采样到时自动补回。
+   * 轮次以快照采样时刻推进,故同一份快照不会被重复推进。
+   */
+  const retainRounds = snapshot.panelOptions?.retainRounds ?? DEFAULT_RETAIN_ROUNDS
+  const retentionRef = useRef<Record<PanelCardId, RowRetention<ShareGroup>> | null>(null)
+  if (retentionRef.current === null) {
+    retentionRef.current = {
+      current: new RowRetention<ShareGroup>(retainRounds),
+      process: new RowRetention<ShareGroup>(retainRounds),
+      conversation: new RowRetention<ShareGroup>(retainRounds),
+      subagent: new RowRetention<ShareGroup>(retainRounds),
+    }
+  }
+  const retention = retentionRef.current
+  // 配置改动后即时生效(宿主设置页写回配置,随下一次轮询下发)
+  for (const id of PANEL_CARD_IDS) retention[id].retainRounds = retainRounds
+  const retainedRef = useRef<{ sampledAt: number; rows: Partial<Record<PanelCardId, RetainedRow<ShareGroup>[]>> }>({
+    sampledAt: -1,
+    rows: {},
+  })
+  if (retainedRef.current.sampledAt !== snapshot.sampledAt) {
+    const sampledGroups: Record<PanelCardId, ShareGroup[]> = {
+      current: applySort(sampledCurrentSessionGroups),
+      process: applySort(sampledProcessGroups),
+      conversation: applySort(sampledSessionGroups),
+      subagent: applySort(sampledSubagentGroups),
+    }
+    const rows: Record<PanelCardId, RetainedRow<ShareGroup>[]> = { current: [], process: [], conversation: [], subagent: [] }
+    for (const id of PANEL_CARD_IDS) {
+      rows[id] = retention[id].advance(sampledGroups[id].map((group) => ({
+        key: group.stickyKey ?? group.key,
+        rowKey: group.key,
+        row: group,
+        // 同一身份多行时,零值行取占用最高的一行作代表
+        weight: group.cpuPercent,
+      })))
+    }
+    retainedRef.current = { sampledAt: snapshot.sampledAt, rows }
+  }
+  /** 某张卡本轮应显示的行与采样标记(未采样行按零值渲染) */
+  const cardRows = (id: PanelCardId): { groups: ShareGroup[]; sampled: boolean[] } => {
+    const rows = retainedRef.current.rows[id] ?? []
+    return {
+      groups: rows.map((item) => (item.sampled ? item.row : zeroedGroup(item.row))),
+      sampled: rows.map((item) => item.sampled),
+    }
+  }
+  const currentCard = cardRows('current')
+  const processCard = cardRows('process')
+  const sessionCard = cardRows('conversation')
+  const subagentCard = cardRows('subagent')
+  const currentSessionGroups = currentCard.groups
+  const processGroups = processCard.groups
+  const sessionGroups = sessionCard.groups
+  const subagentGroups = subagentCard.groups
+  /** 会话卡计数只数真实会话:宿主与未归因是补充行,不计入会话数(卡片与导出共用同一口径) */
+  const sessionCount = sessionGroups.filter(
+    (group) => group.key !== HOST_GROUP_KEY && group.key !== UNATTRIBUTED_GROUP_KEY,
+  ).length
   const currentSessionColors = groupColors(currentSessionGroups)
   /** 两张卡各自的成员配色(主进程/宿主固定品牌蓝,其余按系列色) */
   const processColors = groupColors(processGroups)
   const sessionColors = groupColors(sessionGroups)
-  /** 子会话卡配色:独立分配,使其不与对话卡的同一会话取色冲突(两卡各自表内同源) */
+  /** 子代理卡配色:独立分配,使其不与会话卡的同一会话取色冲突(两卡各自表内同源) */
   const subagentColors = groupColors(subagentGroups)
   /** 进程分组键 → 样本(进程维度分组与样本一一对应,按键取用避免下标耦合) */
   const sampleByPid = new Map(processes.map((sample) => [String(sample.handle.pid), sample]))
+
+  /**
+   * 手动移除一行:只作用于本页面内存(不写浏览器存储,也不写服务端),
+   * 故刷新或重开面板后该行会重新出现;被移除的身份再次被采样到时自动补回。
+   */
+  const removeRow = (id: PanelCardId, group: ShareGroup): void => {
+    const key = group.stickyKey ?? group.key
+    retention[id].remove(key)
+    const rows = retainedRef.current.rows[id] ?? []
+    retainedRef.current = {
+      sampledAt: retainedRef.current.sampledAt,
+      rows: { ...retainedRef.current.rows, [id]: rows.filter((item) => (item.row.stickyKey ?? item.row.key) !== key) },
+    }
+    setRetentionTick((tick) => tick + 1)
+  }
   /** 占比条两端泳道的整机口径数值(两张卡一致,只有中段分组不同) */
   const machine: MachineShare = {
     othersCpu: scaleCpuPercent(snapshot.totals.othersCpuPercent, cpuFactor),
@@ -1206,6 +1447,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    */
   const historyPoints = snapshot.history ?? []
   const historyStats = historySummary(historyPoints)
+  /**
+   * 工具调用时间窗在趋势线上的标注:按采样时刻把窗口映射到折线坐标(0 至 100),
+   * 未结束的窗口右边界顶到右端,过短的窗口按最小可见宽度补足。
+   */
+  const toolMarks = toolWindowMarks(snapshot.toolWindows ?? [], historyPoints, 100, PANEL_TOOL_MARK_MIN_WIDTH)
   /**
    * 把当前快照整理为纯文本(用户显式触发的导出内容)。
    * 导出只在本机剪贴板落地,不经任何 dsh 通道,也不写回采集器;口径与面板展示一致。
@@ -1226,17 +1472,24 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             avg: formatPercent(historyStats.dshCpuAvg * cpuFactor),
             peak: formatPercent(historyStats.dshCpuPeak * cpuFactor),
           })}`]),
+      ...(toolMarks.length === 0 ? [] : [t('history.tools', { count: toolMarks.length })]),
     ]
-    const appendCard = (title: string, countText: string, groups: readonly ShareGroup[]): void => {
+    const appendCard = (
+      title: string,
+      countText: string,
+      groups: readonly ShareGroup[],
+      sampled: readonly boolean[],
+    ): void => {
       lines.push('', `${title} (${countText})`)
-      for (const group of groups) {
-        lines.push(`- ${group.label}: ${formatPercent(group.cpuPercent)} / ${formatBytes(group.memoryBytes)} / ${formatPercent(group.memoryPercent)}`)
-      }
+      groups.forEach((group, index) => {
+        const stale = sampled[index] === false ? ` · ${t('row.unsampled')}` : ''
+        lines.push(`- ${group.label}: ${formatPercent(group.cpuPercent)} / ${formatBytes(group.memoryBytes)} / ${formatPercent(group.memoryPercent)}${stale}`)
+      })
     }
-    appendCard(t('currentProcess.title'), t('currentProcess.count', { count: currentSessionGroups.length }), currentSessionGroups)
-    appendCard(t('table.title'), t('table.count', { count: processGroups.length }), processGroups)
-    appendCard(t('session.title'), t('session.count', { count: sessionCount }), sessionGroups)
-    appendCard(t('subagent.title'), t('subagent.count', { count: subagentGroups.length }), subagentGroups)
+    appendCard(t('currentProcess.title'), t('currentProcess.count', { count: currentSessionGroups.length }), currentSessionGroups, currentCard.sampled)
+    appendCard(t('table.title'), t('table.count', { count: processGroups.length }), processGroups, processCard.sampled)
+    appendCard(t('session.title'), t('session.count', { count: sessionCount }), sessionGroups, sessionCard.sampled)
+    appendCard(t('subagent.title'), t('subagent.count', { count: subagentGroups.length }), subagentGroups, subagentCard.sampled)
     return lines.join('\n')
   }
 
@@ -1282,6 +1535,44 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     </td>
   )
 
+  /**
+   * 名称单元格:色块 + 名称 + 手动移除按钮。
+   * 未采样行(本轮缺席但仍在留存期内)用弱化文字色,并在悬停提示里说明;
+   * 移除按钮只作用于本页面内存,该身份再次被采样到时该行会自动补回。
+   */
+  const nameCell = (cardId: PanelCardId, group: ShareGroup, color: string, label: string, sampled: boolean): ReactNode => (
+    <td
+      style={sampled ? dataCellStyle : { ...dataCellStyle, color: 'var(--dsw-alias-label-tertiary)' }}
+      title={sampled ? label : `${label} · ${t('row.unsampled')}`}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
+        <Swatch color={color} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <button
+          type="button"
+          onClick={() => removeRow(cardId, group)}
+          aria-label={t('row.remove', { name: label })}
+          title={t('row.removeHint')}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flex: 'none',
+            width: 16,
+            height: 16,
+            padding: 0,
+            border: 'none',
+            background: 'transparent',
+            color: 'var(--dsw-alias-label-tertiary)',
+            cursor: 'pointer',
+          }}
+        >
+          <IconCloseOutlineRegular size={12} />
+        </button>
+      </span>
+    </td>
+  )
+
   /** 进程样本的会话名称(无归属显示占位符) */
   const sessionLabelOf = (sample: ResourceSample): string =>
     sample.owner === undefined ? '--' : sample.owner.label ?? sample.owner.sessionId
@@ -1292,41 +1583,42 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   /** 名称列内容宽度(名称前还有色块与间距) */
   const nameColumnWidth = (labels: readonly string[]): number =>
     maxCellWidth(labels, PANEL_TABLE_NAME_MIN_WIDTH) + PANEL_SWATCH_SIZE + 6
-  /** 进程维度表的列定义(内容宽度取表头文案与最长内容的较大者,并不低于列宽下限) */
+  /** 进程维度表的列定义(内容宽度取表头文案与最长内容的较大者,并不低于列宽下限);
+      可选列按本地偏好取舍,表头与行单元同源,隐藏时两处一起缺省,不会错位 */
   const processColumns: PanelColumn[] = [
     { head: head(t('table.column.process')), contentWidth: nameColumnWidth(processGroups.map((group) => group.label)) },
-    {
+    ...(columnVisible('pid') ? [{
       head: head(t('table.column.pid')),
       contentWidth: maxCellWidth([t('table.column.pid'), ...processes.map((sample) => String(sample.handle.pid))], PANEL_TABLE_PID_WIDTH),
-    },
-    {
+    }] : []),
+    ...(columnVisible('parent') ? [{
       head: head(t('table.column.parent')),
       contentWidth: maxCellWidth(
         [t('table.column.parent'), ...processes.map((sample) => String(sample.handle.parentPid ?? ''))],
         PANEL_TABLE_PARENT_WIDTH,
       ),
-    },
-    {
+    }] : []),
+    ...(columnVisible('session') ? [{
       head: head(t('table.column.session')),
       contentWidth: maxCellWidth([t('table.column.session'), ...processes.map(sessionLabelOf)], PANEL_TABLE_SESSION_WIDTH),
-    },
+    }] : []),
     {
       head: head(t('table.column.cpu')),
       contentWidth: maxCellWidth([t('table.column.cpu'), ...processGroups.map((group) => formatPercent(group.cpuPercent))], PANEL_TABLE_CPU_WIDTH),
     },
     {
-      head: head(t('table.column.memory'), 2),
+      head: head(t('table.column.memory'), columnVisible('memoryPercent') ? 2 : 1),
       contentWidth: maxCellWidth(
         [t('table.column.memory'), ...processGroups.map((group) => formatBytes(group.memoryBytes))],
         PANEL_TABLE_MEMORY_VALUE_WIDTH,
       ),
     },
-    {
+    ...(columnVisible('memoryPercent') ? [{
       head: null,
       contentWidth: maxCellWidth(processGroups.map((group) => formatPercent(group.memoryPercent)), PANEL_TABLE_MEMORY_PERCENT_WIDTH),
-    },
+    }] : []),
   ]
-  /** 对话维度表的列定义(首列显示会话名,子会话带标注) */
+  /** 会话维度表的列定义(首列显示会话名,子代理带标注) */
   const sessionLabels = sessionGroups.map((group) => (group.note === undefined ? group.label : `${group.label} · ${group.note}`))
   const sessionColumns: PanelColumn[] = [
     { head: head(t('session.column.session')), contentWidth: nameColumnWidth(sessionLabels) },
@@ -1342,16 +1634,16 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       contentWidth: maxCellWidth([t('table.column.cpu'), ...sessionGroups.map((group) => formatPercent(group.cpuPercent))], PANEL_TABLE_CPU_WIDTH),
     },
     {
-      head: head(t('table.column.memory'), 2),
+      head: head(t('table.column.memory'), columnVisible('memoryPercent') ? 2 : 1),
       contentWidth: maxCellWidth(
         [t('table.column.memory'), ...sessionGroups.map((group) => formatBytes(group.memoryBytes))],
         PANEL_TABLE_MEMORY_VALUE_WIDTH,
       ),
     },
-    {
+    ...(columnVisible('memoryPercent') ? [{
       head: null,
       contentWidth: maxCellWidth(sessionGroups.map((group) => formatPercent(group.memoryPercent)), PANEL_TABLE_MEMORY_PERCENT_WIDTH),
-    },
+    }] : []),
   ]
   /** 本会话维度表的列定义(全部行同属当前会话,故不设会话列) */
   const currentSessionColumns: PanelColumn[] = [
@@ -1359,20 +1651,20 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       head: head(t('table.column.process')),
       contentWidth: nameColumnWidth(currentSessionGroups.map((group) => group.label)),
     },
-    {
+    ...(columnVisible('pid') ? [{
       head: head(t('table.column.pid')),
       contentWidth: maxCellWidth(
         [t('table.column.pid'), ...currentSessionProcesses.map((sample) => String(sample.handle.pid))],
         PANEL_TABLE_PID_WIDTH,
       ),
-    },
-    {
+    }] : []),
+    ...(columnVisible('parent') ? [{
       head: head(t('table.column.parent')),
       contentWidth: maxCellWidth(
         [t('table.column.parent'), ...currentSessionProcesses.map((sample) => String(sample.handle.parentPid ?? ''))],
         PANEL_TABLE_PARENT_WIDTH,
       ),
-    },
+    }] : []),
     {
       head: head(t('table.column.cpu')),
       contentWidth: maxCellWidth(
@@ -1381,19 +1673,19 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       ),
     },
     {
-      head: head(t('table.column.memory'), 2),
+      head: head(t('table.column.memory'), columnVisible('memoryPercent') ? 2 : 1),
       contentWidth: maxCellWidth(
         [t('table.column.memory'), ...currentSessionGroups.map((group) => formatBytes(group.memoryBytes))],
         PANEL_TABLE_MEMORY_VALUE_WIDTH,
       ),
     },
-    {
+    ...(columnVisible('memoryPercent') ? [{
       head: null,
       contentWidth: maxCellWidth(
         currentSessionGroups.map((group) => formatPercent(group.memoryPercent)),
         PANEL_TABLE_MEMORY_PERCENT_WIDTH,
       ),
-    },
+    }] : []),
   ]
 
   return (
@@ -1410,14 +1702,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         {/* 右侧成组:状态徽章与配置入口相邻,避免宽卡片下空间被均摊 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
           {/* 旧快照仍在展示时,轮询失败以警示徽章标明数据已非最新 */}
-          {unavailable ? (
-            <StatusBadge tone="warn" label={t('stat.unavailable')} />
-          ) : snapshot.degraded ? (
-            <StatusBadge tone="warn" label={t('stat.degraded')} />
-          ) : (
-            <StatusBadge tone="ok" label={t('stat.normal')} />
-          )}
-          {settingsButton}
+          <StatusBadge tone={statusTone} label={statusLabel} />
+          {/* 状态播报:视觉不占位,状态变化时读屏念一次(徽章本身仍可被逐项读到) */}
+          <span className="sm-sr-only" role="status" aria-live="polite">{statusLabel}</span>
+          {settingsAnchor}
         </div>
       </div>
       {/* 系统信息行 */}
@@ -1437,28 +1725,27 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           </span>
         ))}
       </div>
-      {/* 短期趋势:最近若干轮采样的 dsh 侧 CPU 合计(整机口径),含高占用阈值参考线 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-          <span style={{ color: 'var(--dsw-alias-label-secondary)', ...PANEL_TYPOGRAPHY.caption }}>
-            {t('history.title', { count: historyPoints.length })}
-          </span>
-          <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums', ...PANEL_TYPOGRAPHY.caption }}>
-            {historyStats === null
-              ? t('history.empty')
-              : t('history.summary', {
-                  avg: formatPercent(historyStats.dshCpuAvg * cpuFactor),
-                  peak: formatPercent(historyStats.dshCpuPeak * cpuFactor),
-                })}
-          </span>
-        </div>
+      {/*
+        短期趋势:最近若干轮采样的 dsh 侧 CPU 合计(整机口径),含高占用阈值参考线,
+        以及工具调用时间窗的竖条标注(会话事件流产物,标注正在跑工具的时段)。
+        展示形式待定(见 前驱版本待办排期清单),故当前只保留折线与标注,不显示标题与均值/峰值文本;
+        数值仍可由悬停提示与快照导出读到。无留存点时整块不渲染,避免留一个无说明的空框。
+      */}
+      {historyPoints.length === 0 ? null : (
         <div
           role="img"
-          aria-label={t('aria.history')}
-          title={historyStats === null ? t('history.empty') : t('history.summary', {
-            avg: formatPercent(historyStats.dshCpuAvg * cpuFactor),
-            peak: formatPercent(historyStats.dshCpuPeak * cpuFactor),
-          })}
+          aria-label={
+            toolMarks.length === 0
+              ? t('aria.history')
+              : `${t('aria.history')} · ${t('history.tools', { count: toolMarks.length })}`
+          }
+          title={[
+            historyStats === null ? t('history.empty') : t('history.summary', {
+              avg: formatPercent(historyStats.dshCpuAvg * cpuFactor),
+              peak: formatPercent(historyStats.dshCpuPeak * cpuFactor),
+            }),
+            ...(toolMarks.length === 0 ? [] : [t('history.tools', { count: toolMarks.length })]),
+          ].join(' · ')}
           style={{
             height: PANEL_HISTORY_HEIGHT,
             border: `${PANEL_SHARE_BAR_BORDER_WIDTH}px solid ${PANEL_SHARE_BAR_BORDER_COLOR}`,
@@ -1468,10 +1755,23 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             overflow: 'hidden',
           }}
         >
-          {historyPoints.length === 0 ? null : (
+          {
             // viewBox 与容器尺寸解耦:折线按百分比坐标绘制,容器宽度变化时自动伸缩;
             // 非等比缩放会拉伸线宽,故用 non-scaling-stroke 固定为 1px
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%" aria-hidden="true">
+              {/* 工具调用时间窗:垫在折线之下,读作背景事件;未结束的窗口顶到右端 */}
+              {toolMarks.map((mark, index) => (
+                <rect
+                  key={`${mark.name}-${index}`}
+                  x={mark.x1}
+                  y="0"
+                  width={mark.x2 - mark.x1}
+                  height="100"
+                  fill={PANEL_TOOL_MARK_COLOR}
+                >
+                  <title>{mark.name}</title>
+                </rect>
+              ))}
               <line
                 x1="0"
                 y1={100 - PANEL_HIGH_LOAD_THRESHOLD}
@@ -1500,9 +1800,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
                 />
               )}
             </svg>
-          )}
+          }
         </div>
-      </div>
+      )}
       {/* 配置子页展开时替换维度卡;关闭时还原为响应式栅格 */}
       {configOpen ? configCard : null}
       <div
@@ -1523,23 +1823,19 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         names={laneNames}
         t={t}
         columns={currentSessionColumns}
-        row={(group, index) => {
+        sampled={currentCard.sampled}
+        row={(group, index, sampled) => {
           const sample = sampleByPid.get(group.key)
           const last = index === currentSessionGroups.length - 1
           const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
-            <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
-              <td style={dataCellStyle} title={group.label}>
-                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
-                  <Swatch color={currentSessionColors[index]} />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.label}</span>
-                </span>
-              </td>
-              <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? ''}</td>
-              <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? ''}</td>
+            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
+              {nameCell('current', group, currentSessionColors[index], group.label, sampled)}
+              {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
+              {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {valueCell(formatPercent(group.memoryPercent), high)}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
             </tr>
           )
         }}
@@ -1561,33 +1857,31 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         open={collapsed.process !== true}
         onToggle={() => toggleCard('process')}
         columns={processColumns}
-        row={(group, index) => {
+        sampled={processCard.sampled}
+        row={(group, index, sampled) => {
           const sample = sampleByPid.get(group.key)
           const last = index === processGroups.length - 1
           const owner = sample?.owner
           const sessionLabel = sample === undefined ? '--' : sessionLabelOf(sample)
           const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
-            <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
-              <td style={dataCellStyle} title={group.label}>
-                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
-                  <Swatch color={processColors[index]} />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.label}</span>
-                </span>
-              </td>
-              <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? ''}</td>
-              <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? ''}</td>
-              <td style={{ ...dataCellStyle, color: owner === undefined ? 'var(--dsw-alias-label-tertiary)' : undefined }} title={sessionLabel}>
-                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionLabel}</span>
-              </td>
+            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
+              {nameCell('process', group, processColors[index], group.label, sampled)}
+              {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
+              {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
+              {columnVisible('session') ? (
+                <td style={{ ...dataCellStyle, color: owner === undefined ? 'var(--dsw-alias-label-tertiary)' : undefined }} title={sessionLabel}>
+                  <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionLabel}</span>
+                </td>
+              ) : null}
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {valueCell(formatPercent(group.memoryPercent), high)}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
             </tr>
           )
         }}
       />
-      {/* 对话维度卡 */}
+      {/* 会话维度卡 */}
       <DimensionCard
         title={t('session.title')}
         countText={t('session.count', { count: sessionCount })}
@@ -1600,27 +1894,23 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         open={collapsed.conversation !== true}
         onToggle={() => toggleCard('conversation')}
         columns={sessionColumns}
-        row={(group, index) => {
+        sampled={sessionCard.sampled}
+        row={(group, index, sampled) => {
           const last = index === sessionGroups.length - 1
           const label = group.note === undefined ? group.label : `${group.label} · ${group.note}`
           const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
-            <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
-              <td style={dataCellStyle} title={label}>
-                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
-                  <Swatch color={sessionColors[index]} />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-                </span>
-              </td>
+            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
+              {nameCell('conversation', group, sessionColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {valueCell(formatPercent(group.memoryPercent), high)}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
             </tr>
           )
         }}
       />
-      {/* 子会话维度卡:只统计归属为子会话的进程,使子会话开销不被父会话掩盖 */}
+      {/* 子代理维度卡:只统计归属为子代理的进程,使子代理开销不被父会话掩盖 */}
       <DimensionCard
         title={t('subagent.title')}
         countText={t('subagent.count', { count: subagentGroups.length })}
@@ -1633,22 +1923,18 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         open={collapsed.subagent !== true}
         onToggle={() => toggleCard('subagent')}
         columns={sessionColumns}
-        row={(group, index) => {
+        sampled={subagentCard.sampled}
+        row={(group, index, sampled) => {
           const last = index === subagentGroups.length - 1
           const label = group.note === undefined ? group.label : `${group.label} · ${group.note}`
           const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
-            <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
-              <td style={dataCellStyle} title={label}>
-                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
-                  <Swatch color={subagentColors[index]} />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-                </span>
-              </td>
+            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
+              {nameCell('subagent', group, subagentColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {valueCell(formatPercent(group.memoryPercent), high)}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
             </tr>
           )
         }}

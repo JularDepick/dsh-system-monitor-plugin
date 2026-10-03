@@ -44,7 +44,7 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
             pid: { type: 'number', required: true, description: '进程标识' },
             name: { type: 'string', description: '进程可读名称' },
             parentPid: { type: 'number', description: '父进程标识' },
-            sessionId: { type: 'string', description: '所属会话标识(用于面板按对话分组)' },
+            sessionId: { type: 'string', description: '所属会话标识(用于面板按会话分组)' },
           },
           additionalProperties: false,
         },

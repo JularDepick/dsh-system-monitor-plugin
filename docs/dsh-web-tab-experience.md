@@ -118,6 +118,8 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
 7. **文案跟随界面语言必须走宿主 locale 服务**:按 `navigator.language` 判定只跟浏览器语言走,与 dsh 界面语言不一致(用户在设置页切换语言时插件文案不跟着变);正确做法:字典以命名空间注册(`ctx.locale.register(ns, { zh, en })`,内置语言 id 只有 `zh`/`en`),并在槽注册时声明 `locale: ns`,框架据此向组件注入译文函数,语言切换时重建该座位;`label` 用 `ctx.locale.bind(ns)` 的 thunk 即可跟随语言;声明了 `locale` 却不注册字典会在渲染期响亮失败;`ctx.locale` 的类型家在 `@deepseek-ai/dsh-client-locale`(只承载类型,不必作为运行时依赖)
 8. **注册的 inline 行高必须带单位**:React 内联样式的 `lineHeight` 属无单位属性,数值会被原样输出为"倍数 × font-size"(`lineHeight: 20` 在 13px 字号下是 260px),组件会因此被撑出大片空白;写 `'20px'` 这类带单位字符串;复刻渲染台验证时也要保持同一数值语义,否则渲染台"通过"而真实页面崩坏
 9. **数据端点返回 200 不等于有数据**:自定义数据路由在"暂无数据"时若返回 200 + 占位结构,客户端必须按字段是否有效判定(如采样时刻为 0),否则会把占位值当真实数据渲染
+10. **注入面板的无障碍要自己补齐**:宿主不会替你补键盘与读屏语义。实测有效的做法:折叠开关用原生 `<button>` 并带 `aria-expanded`;面板内子页(替换式配置页)加 `role="region"` 与名称,入口按钮带 `aria-expanded` 与 `aria-controls`,展开时把焦点移入子页(`tabIndex={-1}` + `focus()`),收起时(含 ESC)把焦点还给入口按钮,否则焦点会落在已卸载的节点上;状态类信息另给一个 `role="status"` + `aria-live="polite"` 的仅读屏文本(用 `clip-path: inset(50%)` 之类做视觉隐藏,不要用 `display:none`);纯装饰的色块与图标加 `aria-hidden`;错误提示卡用 `role="alert"`;表头用 `<th scope="col">`;骨架动画在 `prefers-reduced-motion: reduce` 下关闭
+11. **列可隐藏时表头与行单元必须同源取舍**:动态列宽的表格用 `colgroup` 定列,隐藏某一列时若只改表头不改行单元(或反之),列数错位会直接错行;把可隐藏列抽成一份清单,表头构造与行构造都按同一份清单取舍,跨列表头(如"内存"占两列)的 `colSpan` 也要随之在 1 与 2 之间切换
 
 ## 五,参考文件索引(官方仓库)
 

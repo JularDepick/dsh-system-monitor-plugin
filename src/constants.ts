@@ -111,6 +111,9 @@ export const PANEL_FIRST_SAMPLE_WAIT_MS = QUERY_TIMEOUT_MS + 2000
 /** 会话区域 tab 标识(conversation.view 槽注册 id) */
 export const PANEL_TAB_ID = 'system-monitor'
 
+/** 面板内配置子页的 DOM 标识(入口按钮经 aria-controls 指向它,展开时焦点移入该区域) */
+export const PANEL_SETTINGS_REGION_ID = 'sm-settings'
+
 /** 会话区域 tab 排序(位于「对话」「轨迹」之后) */
 export const PANEL_TAB_ORDER = 30
 
@@ -152,6 +155,49 @@ export const PANEL_HISTORY_HEIGHT = 40
 
 /** 短期趋势线上「高占用阈值」参考线的虚线间距(像素) */
 export const PANEL_HISTORY_DASH = 4
+
+/** 工具调用时间窗的留存条数(超出即丢最旧;只在内存中,不落盘) */
+export const TOOL_WINDOW_CAPACITY = 40
+
+/** 趋势线上工具调用标注的底色(半透明交互底色,明暗两套主题下都读作背景事件) */
+export const PANEL_TOOL_MARK_COLOR = 'var(--dsw-alias-interactive-bg-active, #2631481a)'
+
+/** 趋势线上工具调用标注的最小可见宽度(折线坐标系单位;短调用也留一条可见痕迹) */
+export const PANEL_TOOL_MARK_MIN_WIDTH = 0.6
+
+/**
+ * 明细表可隐藏的可选列(名称列与 CPU 列恒显示:它们是识别行与判读占用的最小信息面)。
+ * 取值同时用作本地偏好里的列标识,新增可选列时在此追加。
+ */
+export const PANEL_TABLE_OPTIONAL_COLUMNS = ['pid', 'parent', 'session', 'memoryPercent'] as const
+
+/** 可隐藏列标识 */
+export type PanelTableColumn = (typeof PANEL_TABLE_OPTIONAL_COLUMNS)[number]
+
+/**
+ * 维度卡标题行底色(浅灰,用于把标题行与卡片正文区分开):
+ * 取滚动条底色档位,浅色主题落到 `--dsw-static-neutral-200`(#e5e5e5),深色主题落到中性深灰;
+ * 悬停时在同一底色上叠一层半透明交互底色(见注入样式),明暗两套主题下都读得出可点。
+ */
+export const PANEL_CARD_HEAD_COLOR = 'var(--dsw-alias-scrollbar-bg-l1, #e5e5e5)'
+
+/**
+ * 列表行留存的默认轮数:某身份连续这么多轮没被采样到即从面板移除该行
+ * (期间该行保留显示但数值归零);配置面范围 `MIN_RETAIN_ROUNDS` 至 `MAX_RETAIN_ROUNDS`。
+ */
+export const DEFAULT_RETAIN_ROUNDS = 10
+
+/** 行留存轮数下限(配置面校验;低于它会让瞬时抖动也触发移除) */
+export const MIN_RETAIN_ROUNDS = 5
+
+/** 行留存轮数上限(配置面校验;高于它会让早已退出的进程长期留在面板) */
+export const MAX_RETAIN_ROUNDS = 60
+
+/**
+ * 百分比展示下限(单位:百分比):小于该值的读数显示为 `<0.01%` 而不是 `0.00%`,
+ * 以免把「有占用但极小」与「确实为零」都读成零;恰为下限时按原值显示。
+ */
+export const PERCENT_DISPLAY_FLOOR = 0.01
 
 /** 面板区域栅格:列数由用户选择(单列或双列),列间距取 `PANEL_STACK_GAP` */
 
@@ -201,14 +247,25 @@ export const PANEL_PRIMARY_COLOR = 'var(--dsw-alias-brand-primary, var(--dsw-sta
 /** 资源占比条轨道底色(静态面色 token,不用交互态 hover token) */
 export const PANEL_SHARE_TRACK_COLOR = 'var(--dsw-alias-bg-layer-2, var(--dsw-alias-interactive-bg-hover))'
 
-/** 右端「空闲」泳道底色(淡灰;不用纯白,避免与卡片底色混淆) */
-export const PANEL_IDLE_COLOR = 'var(--dsw-alias-bg-layer-3, var(--dsw-alias-border-l1, #e5e6eb))'
+/**
+ * 右端「空闲」泳道底色(浅灰,不用纯白):
+ * 取滚动条底色档位,浅色主题落到 `--dsw-static-neutral-200`(#e5e5e5),深色主题落到中性深灰,
+ * 故两套主题下都与卡片底色可辨,不会读成空白。
+ */
+export const PANEL_IDLE_COLOR = 'var(--dsw-alias-scrollbar-bg-l1, #e5e5e5)'
 
-/** 占比条外边框宽度(像素) */
-export const PANEL_SHARE_BAR_BORDER_WIDTH = 1
+/**
+ * 中段「无成员」占位底色(灰暗):
+ * 取遮罩档位,浅色主题为 24% 黑、深色主题为 50% 黑,故两套主题下都比空闲段更暗,
+ * 让「该维度暂无成员」一眼可辨(该占位同时带兜底悬停提示)。
+ */
+export const PANEL_SHARE_EMPTY_COLOR = 'var(--dsw-alias-bg-mask-1, #0000003d)'
 
-/** 占比条外边框颜色(取当前 profile 的描边色 token) */
-export const PANEL_SHARE_BAR_BORDER_COLOR = 'var(--dsw-alias-border-l1)'
+/** 占比条整体外边框宽度(像素):2px,明暗主题下都清晰可辨 */
+export const PANEL_SHARE_BAR_BORDER_WIDTH = 2
+
+/** 占比条整体外边框颜色(灰色;取第三档描边色,浅色主题 12% 黑、深色主题 16% 白) */
+export const PANEL_SHARE_BAR_BORDER_COLOR = 'var(--dsw-alias-border-l3, #0000001f)'
 
 /** 资源占比堆叠条高度(像素;含 1px 外边框) */
 export const PANEL_SHARE_BAR_HEIGHT = 18
@@ -238,7 +295,7 @@ export const PANEL_SETTINGS_WIDTH = 560
 /**
  * 占比条三泳道宽度比例:左端「其他应用」、中段「dsh 及其子进程」、右端「空闲」。
  * 三段都是固定 UI 长度(不随真实占用变化),占用数值由各段标签给出,
- * 因此低占用时中段仍能清楚比较各进程/对话;中段按 dsh 成员相对占比分段。
+ * 因此低占用时中段仍能清楚比较各进程/会话;中段按 dsh 成员相对占比分段。
  */
 export const PANEL_SHARE_OTHERS_RATIO = 0.2
 
@@ -308,7 +365,7 @@ export const PANEL_TABLE_MEMORY_VALUE_WIDTH = 104
 /** 内存列(占比)最小宽度(像素) */
 export const PANEL_TABLE_MEMORY_PERCENT_WIDTH = 64
 
-/** 对话表进程数列最小宽度(像素) */
+/** 会话表进程数列最小宽度(像素) */
 export const PANEL_TABLE_SESSION_COUNT_WIDTH = 64
 
 /** 名称列最小宽度(像素;进程名/会话名很长时也保证可读) */

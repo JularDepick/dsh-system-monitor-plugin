@@ -1,5 +1,5 @@
 /*
- * 进程归属解析(对话维度)
+ * 进程归属解析(会话维度)
  *
  * 把 OS 级进程样本归到具体会话,来源按优先级:
  *  1. 宿主服务:终端(PTY)会话快照给出 pid ↔ 会话;
@@ -25,7 +25,7 @@ export interface SessionInfo {
   sessionId: string
   /** 会话显示名(宿主会话标题) */
   label?: string
-  /** 是否子会话(subagent 派生) */
+  /** 是否子代理(subagent 派生) */
   subagent?: boolean
 }
 
@@ -141,7 +141,7 @@ export class OwnerResolver {
     return owner ?? undefined
   }
 
-  /** 组装归属对象(补上会话显示名与子会话标记) */
+  /** 组装归属对象(补上会话显示名与子代理标记) */
   private decorate(sessionId: string): ProcessOwner {
     const info = this.sessions.get(sessionId)
     return {

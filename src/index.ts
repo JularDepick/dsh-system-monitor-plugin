@@ -26,6 +26,10 @@ export { cpuDisplayFactor, normalizeCpuScope, scaleCpuPercent } from './monitor/
 export { parseCpuCfsQuota, parseCpuMax, parseMemoryLimit, parseMemoryMax } from './monitor/cgroup'
 export { parseSessionIdFromEnviron, terminalAncestor } from './monitor/attribution'
 export { SampleHistory, historyPolyline, historySummary } from './monitor/history'
+export { RowRetention } from './monitor/retention'
+export { formatPercent } from './monitor/format'
+export { ToolWindowLog, toolWindowMarks } from './monitor/tool-window'
+export { sortRows, normalizeTableSort } from './monitor/table-sort'
 export type {
   MonitorSnapshot,
   ProcessHandle,
