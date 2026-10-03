@@ -19,7 +19,7 @@ import type { PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // 类型面:ctx.slots 服务的 Context 合并(slots 服务由 ui-renderer 提供)
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, SegmentedControl, StateDot, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   CLIENT_POLL_INTERVAL,
   DEFAULT_LANE_NAMES,
@@ -36,6 +36,7 @@ import {
   PANEL_LOCALE_NAMESPACE,
   PANEL_MAX_WIDTH,
   PANEL_OTHERS_COLOR,
+  PANEL_PRIMARY_COLOR,
   PANEL_PROJECT_URL,
   PANEL_SERIES_COLORS,
   PANEL_SHARE_BAR_FALLBACK_WIDTH,
@@ -48,7 +49,10 @@ import {
   PANEL_SHARE_MAX_SINGLE_RATIO,
   PANEL_SHARE_MEMBER_MIN_RATIO,
   PANEL_SHARE_NAME_PADDING,
+  PANEL_SHARE_NAME_MIN_CONTRAST,
   PANEL_SHARE_OTHERS_RATIO,
+  PANEL_SHARE_TRACK_COLOR,
+  PANEL_SETTINGS_WIDTH,
   PANEL_STACK_GAP,
   PANEL_STORAGE_KEY,
   PANEL_SWATCH_SIZE,
@@ -89,6 +93,8 @@ interface ShareGroup {
   memoryBytes: number
   /** 成员进程数 */
   count: number
+  /** 是否为主进程/宿主分组:固定用品牌蓝,不参与系列色轮转 */
+  primary?: boolean
 }
 
 /** 占比条两端泳道所需的整机口径数值(均为占整机百分比) */
@@ -141,6 +147,20 @@ function seriesColor(index: number): string {
   return PANEL_SERIES_COLORS[index % PANEL_SERIES_COLORS.length]
 }
 
+/**
+ * 各分段的最终配色:主进程/宿主泳道固定取品牌蓝(`PANEL_PRIMARY_COLOR`,继承 profile web),
+ * 其余成员按出现顺序取系列色——系列色不参与主泳道,主泳道也不占用系列色名额。
+ */
+function groupColors(groups: readonly ShareGroup[]): string[] {
+  let next = 0
+  return groups.map((group) => {
+    if (group.primary === true) return PANEL_PRIMARY_COLOR
+    const color = seriesColor(next)
+    next += 1
+    return color
+  })
+}
+
 /** 占比条段标签是否放得下:按字宽估算,文字宽加留白不超过所在段/格宽度 */
 function labelFits(text: string, cellWidth: number, padding: number = PANEL_SHARE_LABEL_PADDING): boolean {
   return text.length > 0 && cellWidth >= text.length * PANEL_SHARE_LABEL_CHAR_WIDTH + padding
@@ -185,11 +205,12 @@ function computeLaneWeights(values: readonly number[]): number[] {
   })
 }
 
-/** 进程维度分组:每个进程一组,保持采集顺序(进程树在前) */
-function groupByProcess(processes: readonly ResourceSample[]): ShareGroup[] {
+/** 进程维度分组:每个进程一组,保持采集顺序(进程树在前);dsh 主进程标记为主泳道 */
+function groupByProcess(processes: readonly ResourceSample[], rootPid: number): ShareGroup[] {
   return processes.map((sample) => ({
     key: String(sample.handle.pid),
     label: displayName(sample),
+    ...(sample.handle.pid === rootPid ? { primary: true } : {}),
     cpuPercent: sample.cpuPercent,
     memoryPercent: sample.memoryPercent,
     memoryBytes: sample.memoryBytes,
@@ -217,7 +238,7 @@ function groupBySession(
   }
   for (const sample of processes) {
     if (sample.handle.pid === rootPid) {
-      host ??= { key: HOST_GROUP_KEY, label: t('session.host'), cpuPercent: 0, memoryPercent: 0, memoryBytes: 0, count: 0 }
+      host ??= { key: HOST_GROUP_KEY, label: t('session.host'), primary: true, cpuPercent: 0, memoryPercent: 0, memoryBytes: 0, count: 0 }
       merge(host, sample)
       continue
     }
@@ -256,6 +277,9 @@ const panelCss = `
 @media (prefers-reduced-motion: reduce) { .sm-skeleton { animation: none; } }
 /* 维度卡容器:可用宽度容得下两列时并排,否则纵向堆叠(纯 CSS 栅格,无需测量宽度) */
 .sm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(${PANEL_CARDS_MIN_COLUMN_WIDTH}px, 1fr)); gap: ${PANEL_STACK_GAP}px; align-items: start; }
+/* 维度卡头部:可点击折叠(标题即折叠开关),悬停用宿主交互底色提示可点 */
+.sm-card-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.sm-card-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
 /* 面板根是纵向 flex 滚动容器:子块一律不参与压缩。
    卡片带 overflow:hidden,其 flex 自动最小尺寸按规范为 0,不锁死会被压扁并裁掉表格内容 */
 .sm-column > * { flex: none; }
@@ -367,7 +391,11 @@ const nameTextStyle: CSSProperties = {
   ...PANEL_TYPOGRAPHY.caption,
 }
 
-/** 从颜色 token 的回退十六进制值推出可读文字色(黑或白取对比度更高者) */
+/**
+ * 从颜色 token 的回退十六进制值推出可读文字色。
+ * 取色策略按「优先白色、次选黑色」:白色相对分段底色的对比度不低于阈值即用白字,
+ * 只有浅色底(白色读不清)才退回黑字。
+ */
 function contrastTextColor(token: string): string {
   const match = /#([0-9a-f]{6})/i.exec(token)
   if (match === null) return 'var(--dsw-alias-label-primary)'
@@ -377,40 +405,26 @@ function contrastTextColor(token: string): string {
     return raw <= 0.03928 ? raw / 12.92 : ((raw + 0.055) / 1.055) ** 2.4
   }
   const luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
-  const onWhite = 1.05 / (luminance + 0.05)
-  const onBlack = (luminance + 0.05) / 0.05
-  return onBlack >= onWhite ? '#111111' : '#ffffff'
+  const whiteContrast = 1.05 / (luminance + 0.05)
+  return whiteContrast >= PANEL_SHARE_NAME_MIN_CONTRAST ? '#ffffff' : '#111111'
 }
 
-/** 面板右上角的配置入口按钮 */
-const settingsButtonStyle: CSSProperties = {
-  flex: 'none',
-  padding: '1px 8px',
-  borderRadius: 999,
-  border: '1px solid var(--dsw-alias-border-l2)',
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary)',
-  cursor: 'pointer',
-  font: 'inherit',
-  whiteSpace: 'nowrap',
-  ...PANEL_TYPOGRAPHY.caption,
+/** 配置子页:设置行(标签在左、控件在右,行间以宿主分隔线分栏) */
+const settingsRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  minHeight: 36,
+  padding: '4px 0',
+  borderBottom: '1px solid var(--dsw-alias-border-l1)',
 }
 
-/** 配置子页里的开关控件 */
-function switchStyle(on: boolean): CSSProperties {
-  return {
-    minWidth: 64,
-    padding: '1px 10px',
-    borderRadius: 999,
-    border: `1px solid ${on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
-    background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-interactive-bg-hover)',
-    color: on ? 'var(--dsw-alias-brand-text, #ffffff)' : 'var(--dsw-alias-label-secondary)',
-    cursor: 'pointer',
-    font: 'inherit',
-    textAlign: 'center',
-    whiteSpace: 'nowrap',
-    ...PANEL_TYPOGRAPHY.caption,
-  }
+/** 配置子页:设置行的标签 */
+const settingsLabelStyle: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  minWidth: 0,
+  ...PANEL_TYPOGRAPHY.base,
 }
 
 /** 面板本地偏好(未记录项为 null,沿用插件配置) */
@@ -451,7 +465,7 @@ function writeStoredPreferences(patch: Partial<StoredPreferences>): void {
 }
 
 /** 名称前配色标识块(与占比条分段同色,充当图例) */
-function Swatch(props: { index: number }): ReactNode {
+function Swatch(props: { color: string }): ReactNode {
   return (
     <span
       style={{
@@ -459,7 +473,7 @@ function Swatch(props: { index: number }): ReactNode {
         height: PANEL_SWATCH_SIZE,
         flex: 'none',
         borderRadius: 3,
-        background: seriesColor(props.index),
+        background: props.color,
       }}
     />
   )
@@ -510,6 +524,7 @@ function ShareTrack(props: {
 }): ReactNode {
   const values = props.groups.map((group) => props.pick(group))
   const weights = computeLaneWeights(values)
+  const colors = groupColors(props.groups)
   const dshTotal = values.reduce((sum, value) => sum + value, 0)
   const othersText = formatPercent(props.others)
   const idleText = formatPercent(props.idle)
@@ -535,7 +550,7 @@ function ShareTrack(props: {
           display: 'flex',
           height: props.names ? PANEL_SHARE_BAR_HEIGHT_NAMED : PANEL_SHARE_BAR_HEIGHT,
           borderRadius: 999,
-          background: 'var(--dsw-alias-interactive-bg-hover)',
+          background: PANEL_SHARE_TRACK_COLOR,
           overflow: 'hidden',
         }}
       >
@@ -551,9 +566,9 @@ function ShareTrack(props: {
               <div
                 key={group.key}
                 title={`${group.label} ${formatPercent(values[index])}`}
-                style={{ flexGrow: weights[index], flexBasis: 0, background: seriesColor(index), ...laneCellStyle }}
+                style={{ flexGrow: weights[index], flexBasis: 0, background: colors[index], ...laneCellStyle }}
               >
-                {named(group.label, laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index], contrastTextColor(seriesColor(index)))}
+                {named(group.label, laneWidth(PANEL_SHARE_DSH_RATIO) * weights[index], contrastTextColor(colors[index]))}
               </div>
             )
           })}
@@ -625,10 +640,10 @@ function ShareLegend(props: { t: PanelTranslate }): ReactNode {
     { key: 'others', color: PANEL_OTHERS_COLOR, label: props.t('chart.others') },
     {
       key: 'dsh',
-      color: `linear-gradient(90deg, ${seriesColor(0)} 0 34%, ${seriesColor(1)} 34% 67%, ${seriesColor(2)} 67% 100%)`,
+      color: `linear-gradient(90deg, ${PANEL_PRIMARY_COLOR} 0 34%, ${seriesColor(0)} 34% 67%, ${seriesColor(1)} 67% 100%)`,
       label: props.t('chart.dsh'),
     },
-    { key: 'idle', color: 'var(--dsw-alias-interactive-bg-hover)', label: props.t('chart.idle') },
+    { key: 'idle', color: PANEL_SHARE_TRACK_COLOR, label: props.t('chart.idle') },
   ]
   return (
     <div
@@ -692,10 +707,17 @@ function DimensionCard(props: {
 
   const cpuTotal = props.groups.reduce((sum, group) => sum + group.cpuPercent, 0)
   const memoryTotal = props.groups.reduce((sum, group) => sum + group.memoryPercent, 0)
+  /** 明细表是否展开:点击卡片标题(整行)切换,默认展开 */
+  const [tableOpen, setTableOpen] = useState(true)
+  const toggleLabel = tableOpen ? props.t('table.collapse') : props.t('table.expand')
 
   return (
     <div style={cardStyle}>
-      <div style={cardHeadStyle}>
+      {/* 头部整行是折叠开关:标题即入口,左侧用宿主 chevron 图标指示展开状态 */}
+      <button type="button" className="sm-card-head" aria-expanded={tableOpen} title={toggleLabel} onClick={() => setTableOpen((open) => !open)}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', flex: 'none', color: 'var(--dsw-alias-label-tertiary)' }}>
+          {tableOpen ? <IconChevronDownOutlineRegular /> : <IconChevronRightOutlineRegular />}
+        </span>
         <span style={{ color: 'var(--dsw-alias-label-secondary)', flex: 'none', ...PANEL_TYPOGRAPHY.baseStrong }}>{props.title}</span>
         <span style={cardMetaStyle}>
           {props.countText}
@@ -704,7 +726,7 @@ function DimensionCard(props: {
           {' · '}
           {props.t('chart.headerTotal', { metric: props.t('table.column.memory'), value: formatPercent(memoryTotal) })}
         </span>
-      </div>
+      </button>
       <div ref={bodyRef} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px' }}>
         <ShareLegend t={props.t} />
         <ShareRow
@@ -728,7 +750,7 @@ function DimensionCard(props: {
           t={props.t}
         />
       </div>
-      {props.groups.length === 0 ? (
+      {!tableOpen ? null : props.groups.length === 0 ? (
         <div style={{ color: 'var(--dsw-alias-label-tertiary)', textAlign: 'center', padding: '0 0 10px', ...PANEL_TYPOGRAPHY.base }}>
           {props.emptyText}
         </div>
@@ -755,11 +777,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   /** 面板本地偏好(泳道内名称、布局;null 表示本地未改过,沿用插件配置) */
   const [preferences, setPreferences] = useState<StoredPreferences>(readStoredPreferences)
 
-  /** 配置入口按钮(面板右上角) */
+  /** 配置入口按钮(面板右上角;用宿主官方按钮,配色继承 profile web) */
   const settingsButton = (
-    <button type="button" style={settingsButtonStyle} onClick={() => setConfigOpen((open) => !open)}>
+    <Button variant="ghost" size="sm" onClick={() => setConfigOpen((open) => !open)}>
       {t('config.open')}
-    </button>
+    </Button>
   )
 
   useEffect(() => {
@@ -819,40 +841,38 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     writeStoredPreferences({ [key]: value } as Partial<StoredPreferences>)
   }
 
-  /** 配置子页:面板内展开的配置视图,由右上角按钮呼起、ESC 或「关闭」收起 */
+  /**
+   * 配置子页:面板内展开的配置视图,由右上角按钮呼起、ESC 或「关闭」收起。
+   * 控件一律用宿主官方组件(开关、分段控件、按钮),配色与外观继承 profile web;
+   * 设置行收在 PANEL_SETTINGS_WIDTH 内,避免宽卡片下标签与控件相距过远。
+   */
   const configCard = (
     <div style={cardStyle}>
       <div style={cardHeadStyle}>
         <span style={{ color: 'var(--dsw-alias-label-secondary)', ...PANEL_TYPOGRAPHY.baseStrong }}>{t('config.title')}</span>
-        <button type="button" style={settingsButtonStyle} onClick={() => setConfigOpen(false)}>
+        <Button variant="ghost" size="sm" onClick={() => setConfigOpen(false)}>
           {t('config.close')}
-        </button>
+        </Button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <span style={{ color: 'var(--dsw-alias-label-primary)', ...PANEL_TYPOGRAPHY.base }}>{t('config.laneNames')}</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={laneNames}
-            style={switchStyle(laneNames)}
-            onClick={() => setPreference('laneNames', !laneNames)}
-          >
-            {laneNames ? t('config.on') : t('config.off')}
-          </button>
+      <div style={{ display: 'flex', flexDirection: 'column', padding: '2px 12px 10px', maxWidth: PANEL_SETTINGS_WIDTH }}>
+        <div style={settingsRowStyle}>
+          <span style={settingsLabelStyle}>{t('config.laneNames')}</span>
+          <Switch checked={laneNames} onChange={(next) => setPreference('laneNames', next)} label={t('config.laneNames')} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <span style={{ color: 'var(--dsw-alias-label-primary)', ...PANEL_TYPOGRAPHY.base }}>{t('config.layout')}</span>
-          <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
-            <button type="button" aria-pressed={layout === 'side'} style={switchStyle(layout === 'side')} onClick={() => setPreference('layout', 'side')}>
-              {t('config.layoutSide')}
-            </button>
-            <button type="button" aria-pressed={layout === 'stack'} style={switchStyle(layout === 'stack')} onClick={() => setPreference('layout', 'stack')}>
-              {t('config.layoutStack')}
-            </button>
-          </span>
+        <div style={settingsRowStyle}>
+          <span style={settingsLabelStyle}>{t('config.layout')}</span>
+          <SegmentedControl
+            id="sm-layout"
+            value={layout}
+            options={[
+              { value: 'side', label: t('config.layoutSide') },
+              { value: 'stack', label: t('config.layoutStack') },
+            ]}
+            onChange={(next) => setPreference('layout', next)}
+            label={t('config.layout')}
+          />
         </div>
-        <span style={{ color: 'var(--dsw-alias-label-tertiary)', ...PANEL_TYPOGRAPHY.caption }}>{t('config.hint')}</span>
+        <span style={{ color: 'var(--dsw-alias-label-tertiary)', paddingTop: 8, ...PANEL_TYPOGRAPHY.caption }}>{t('config.hint')}</span>
       </div>
     </div>
   )
@@ -895,8 +915,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   }
 
   const processes = snapshot.processes
-  const processGroups = groupByProcess(processes)
+  const processGroups = groupByProcess(processes, snapshot.rootPid)
   const sessionGroups = groupBySession(processes, snapshot.rootPid, t)
+  /** 两张卡各自的成员配色(主进程/宿主固定品牌蓝,其余按系列色) */
+  const processColors = groupColors(processGroups)
+  const sessionColors = groupColors(sessionGroups)
   /** 进程分组键 → 样本(进程维度分组与样本一一对应,按键取用避免下标耦合) */
   const sampleByPid = new Map(processes.map((sample) => [String(sample.handle.pid), sample]))
   /** 占比条两端泳道的整机口径数值(两张卡一致,只有中段分组不同) */
@@ -1005,7 +1028,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
               <td style={dataCellStyle} title={group.label}>
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
-                  <Swatch index={index} />
+                  <Swatch color={processColors[index]} />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.label}</span>
                 </span>
               </td>
@@ -1053,7 +1076,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <tr key={group.key} style={{ borderBottom: last ? 'none' : '1px solid var(--dsw-alias-border-l1)' }}>
               <td style={dataCellStyle} title={label}>
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
-                  <Swatch index={index} />
+                  <Swatch color={sessionColors[index]} />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
                 </span>
               </td>

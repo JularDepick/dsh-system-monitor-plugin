@@ -113,23 +113,25 @@ export const PANEL_TYPOGRAPHY = {
 } as const
 
 /**
- * 资源占比堆叠条的分段配色(按被监控进程顺序循环取用)。
- * 全部取自宿主静态色 token(主题包提供,明暗主题下均可辨),回退值为对应静态色默认值
+ * 资源占比堆叠条的分段配色(非主泳道成员按顺序循环取用)。
+ * 全部取自宿主静态色 token(主题包提供,明暗主题下均可辨),回退值为对应静态色默认值;
+ * 不含 deepseek 蓝色家族——品牌蓝固定留给主进程/宿主泳道(`PANEL_PRIMARY_COLOR`),避免混淆。
  */
 export const PANEL_SERIES_COLORS = [
-  'var(--dsw-static-deepseek-500, #4176e6)',
   'var(--dsw-static-amber-400, #f7ad31)',
   'var(--dsw-static-green-500, #22c55e)',
   'var(--dsw-static-red-400, #f25a5a)',
-  'var(--dsw-static-blue-400, #60a5fa)',
-  'var(--dsw-static-deepseek-600, #4868b2)',
   'var(--dsw-static-amber-600, #dd8629)',
   'var(--dsw-static-green-400, #4ed17e)',
   'var(--dsw-static-red-600, #ec1313)',
-  'var(--dsw-static-blue-600, #2563eb)',
   'var(--dsw-static-neutral-400, #a2a4a6)',
-  'var(--dsw-static-deepseek-400, #7aaaff)',
 ]
+
+/** 主进程/宿主泳道的固定配色(继承 profile web 品牌蓝) */
+export const PANEL_PRIMARY_COLOR = 'var(--dsw-alias-brand-primary, var(--dsw-static-deepseek-500, #4176e6))'
+
+/** 资源占比条轨道底色(静态面色 token,不用交互态 hover token) */
+export const PANEL_SHARE_TRACK_COLOR = 'var(--dsw-alias-bg-layer-2, var(--dsw-alias-interactive-bg-hover))'
 
 /** 资源占比堆叠条高度(像素) */
 export const PANEL_SHARE_BAR_HEIGHT = 14
@@ -139,6 +141,15 @@ export const PANEL_SHARE_BAR_HEIGHT_NAMED = 22
 
 /** 泳道内名称条的留白(像素:文字两侧 + 与段边的内缩,用于判断名称是否放得下) */
 export const PANEL_SHARE_NAME_PADDING = 12
+
+/**
+ * 泳道内名称文字色的判定阈值:
+ * 白色相对分段底色的对比度不低于该值即用白字(优先白色),否则退回黑字。
+ */
+export const PANEL_SHARE_NAME_MIN_CONTRAST = 3
+
+/** 配置子页设置行的最大宽度(像素):设置行只在舒适宽度内排布,避免标签与控件相距过远 */
+export const PANEL_SETTINGS_WIDTH = 560
 
 /**
  * 占比条三泳道宽度比例:左端「其他应用」、中段「dsh 及其子进程」、右端「空闲」。
