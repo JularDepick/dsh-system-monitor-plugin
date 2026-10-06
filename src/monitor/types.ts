@@ -33,6 +33,11 @@ export interface ProcessOwner {
   label?: string
   /** 是否由子代理(subagent)派生 */
   subagent?: boolean
+  /**
+   * 所属会话的祖先会话标识(自根到直接父会话,不含自身;顶层会话缺席)。
+   * 面板据此把子代理会话归入其父会话的维度卡(本会话卡纳入当前会话派生的子代理)。
+   */
+  lineage?: string[]
 }
 
 /** 进程资源占用样本 */

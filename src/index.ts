@@ -24,7 +24,7 @@ export { baselineKey, parseCimDate, parseCpuSeconds, parseElapsedSeconds, parseP
 export { appendProbeHistory, probeDerived } from './monitor/clock-ticks'
 export { cpuDisplayFactor, normalizeCpuScope, scaleCpuPercent } from './monitor/cpu-scope'
 export { parseCpuCfsQuota, parseCpuMax, parseMemoryLimit, parseMemoryMax } from './monitor/cgroup'
-export { parseSessionIdFromEnviron, terminalAncestor } from './monitor/attribution'
+export { parseSessionIdFromEnviron, sessionLineage, terminalAncestor } from './monitor/attribution'
 export { RowRetention } from './monitor/retention'
 export { formatPercent } from './monitor/format'
 export { sortRows, normalizeTableSort } from './monitor/table-sort'

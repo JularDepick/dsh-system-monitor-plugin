@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.2.0-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.2.0)
+[![Version](https://img.shields.io/badge/Version-0.2.1-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.2.1)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -42,13 +42,13 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 使用 tarball 分发时:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.2.0.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.2.1.tgz
 ```
 
 
 ## 使用
 
-安装并启动后,插件在 Web UI 会话区域标签栏提供「系统监控」标签页,按四个维度展示被监控进程的 CPU 占用率与内存占用(按量级自适应 KB/MB/GB;百分比三档: 确切 0 显示 `0%`,小于 0.01% 显示 `<0.01%`,其余两位小数): 本会话进程资源(只统计当前会话的进程),进程资源,会话资源(其中归属为子代理的会话并成一行「子代理」合计),子代理资源(逐个展示各子代理)
+安装并启动后,插件在 Web UI 会话区域标签栏提供「系统监控」标签页,按四个维度展示被监控进程的 CPU 占用率与内存占用(按量级自适应 KB/MB/GB;百分比三档: 确切 0 显示 `0%`,小于 0.01% 显示 `<0.01%`,其余两位小数): 本会话进程资源(统计当前会话及其派生的子代理进程,子代理进程行带「子代理」标注且卡头另给其中子代理合计),进程资源,会话资源(其中归属为子代理的会话并成一行「子代理」合计),子代理资源(逐个展示各子代理,属于当前会话派生的排在前并标注「本会话」)
 
 每张卡含该维度的合计,三段固定泳道的资源占比条(其他,DSH 及其子进程(按成员分段),空闲;各段标出占整机的百分比,放得下时于段内显示进程名/会话名)与明细表;卡片标题可点击折叠或展开该卡内容
 

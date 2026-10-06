@@ -6,6 +6,7 @@
  *  2. Agent 汇报:句柄可显式带 sessionId;
  *  3. 子进程环境(Linux/WSL):模型 shell 调用派生的进程带 DSH_SESSION_ID。
  * 环境读取与宿主查询都经注入函数实现,便于独立测试。
+ * 归属同时带上会话谱系(祖先会话序列),使子代理会话可归入其父会话的维度卡。
  * 归属仅用于面板分组展示,不改变采样口径,也不向 dsh 主体暴露。
  * 作者:JularDepick
  */
@@ -19,6 +20,9 @@ const SESSION_ENV_KEY = 'DSH_SESSION_ID='
 /** 沿父进程链向上查找的深度上限(防止异常链成环导致解析失控) */
 const SESSION_SUBTREE_MAX_DEPTH = 32
 
+/** 会话谱系上溯的深度上限(与进程子树上溯同理,防止异常链成环导致解析失控) */
+const SESSION_LINEAGE_MAX_DEPTH = 32
+
 /** 会话元信息(宿主会话清单的一项) */
 export interface SessionInfo {
   /** 会话标识 */
@@ -27,6 +31,30 @@ export interface SessionInfo {
   label?: string
   /** 是否子代理(subagent 派生) */
   subagent?: boolean
+  /** 父会话标识(子代理会话记录其派生来源;顶层会话缺席) */
+  parentSession?: string
+}
+
+/**
+ * 会话谱系:沿 `parentSession` 逐级上溯,返回自根到直接父会话的祖先标识序列(不含自身)。
+ * 父会话不在本轮清单内时仍记入该标识(父会话可能已退出或未装载),其后无法继续上溯;
+ * 链断、成环或超过深度上限即停止;顶层会话返回空数组。
+ * 面板据此把子代理会话归入其父会话的维度卡,故与进程归属同源(导出以便纯函数回归)。
+ */
+export function sessionLineage(
+  sessionId: string,
+  sessions: ReadonlyMap<string, SessionInfo>,
+  maxDepth: number = SESSION_LINEAGE_MAX_DEPTH,
+): string[] {
+  const ancestors: string[] = []
+  const seen = new Set<string>([sessionId])
+  let current = sessions.get(sessionId)?.parentSession
+  while (current !== undefined && current.length > 0 && ancestors.length < maxDepth && !seen.has(current)) {
+    seen.add(current)
+    ancestors.push(current)
+    current = sessions.get(current)?.parentSession
+  }
+  return ancestors.reverse()
 }
 
 /** 从 /proc/<pid>/environ 文本中取会话标识(缺失或为空时返回 undefined) */
@@ -78,6 +106,8 @@ export class OwnerResolver {
   private reported = new Map<number, string>()
   /** 会话元信息(会话标识 → 显示名等) */
   private sessions = new Map<string, SessionInfo>()
+  /** 会话谱系缓存(会话标识 → 祖先序列;宿主状态每轮刷新后失效) */
+  private readonly lineages = new Map<string, string[]>()
   /** 本轮采样的父子关系(pid → 父 pid;用于终端子树归属) */
   private parents: ReadonlyMap<number, number | null> = new Map()
 
@@ -93,6 +123,8 @@ export class OwnerResolver {
   updateHostState(sessions: readonly SessionInfo[], terminalPids: ReadonlyMap<number, string>): void {
     this.sessions = new Map(sessions.map((session) => [session.sessionId, session]))
     this.terminals = new Map(terminalPids)
+    // 会话清单变化后谱系可能变化(新派生的子代理会话),故整体失效重算
+    this.lineages.clear()
   }
 
   /** 记录 Agent 汇报句柄的会话归属(显式标注优先于环境推断) */
@@ -141,13 +173,19 @@ export class OwnerResolver {
     return owner ?? undefined
   }
 
-  /** 组装归属对象(补上会话显示名与子代理标记) */
+  /** 组装归属对象(补上会话显示名,子代理标记与祖先会话谱系) */
   private decorate(sessionId: string): ProcessOwner {
     const info = this.sessions.get(sessionId)
+    let lineage = this.lineages.get(sessionId)
+    if (lineage === undefined) {
+      lineage = sessionLineage(sessionId, this.sessions)
+      this.lineages.set(sessionId, lineage)
+    }
     return {
       sessionId,
       ...(info?.label === undefined || info.label.length === 0 ? {} : { label: info.label }),
       ...(info?.subagent === true ? { subagent: true } : {}),
+      ...(lineage.length === 0 ? {} : { lineage }),
     }
   }
 }

@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.2.0-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.2.0)
+[![Version](https://img.shields.io/badge/Version-0.2.1-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.2.1)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -42,13 +42,13 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 When distributing a tarball:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.2.0.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.2.1.tgz
 ```
 
 
 ## Usage
 
-After installation and startup, the plugin provides a "System Monitor" tab in the session-area tab bar of the Web UI, showing CPU usage and memory usage of monitored processes across four dimensions (auto-scaled KB/MB/GB; percentages in three tiers: exactly 0 shown as `0%`, below 0.01% shown as `<0.01%`, otherwise two decimals): this session's processes (only processes of the current session), processes, sessions (sessions attributed to a subagent are merged into a single subagent total row), subagents (each subagent listed separately)
+After installation and startup, the plugin provides a "System Monitor" tab in the session-area tab bar of the Web UI, showing CPU usage and memory usage of monitored processes across four dimensions (auto-scaled KB/MB/GB; percentages in three tiers: exactly 0 shown as `0%`, below 0.01% shown as `<0.01%`, otherwise two decimals): this session's processes (the current session plus the subagent sessions it spawned, with subagent rows marked and their total shown in the card head), processes, sessions (sessions attributed to a subagent are merged into a single subagent total row), subagents (each subagent listed separately, those spawned by the current session first and marked as this session)
 
 Each card carries the totals of its dimension, a resource share bar of three fixed lanes (others, DSH and its subprocesses (segmented per member), idle; each lane is labelled with its percentage of the whole machine, and the process/session name is shown inside a segment whenever it fits) and a detail table; clicking a card title collapses or expands that card
 

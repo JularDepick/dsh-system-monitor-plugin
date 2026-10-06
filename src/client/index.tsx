@@ -112,7 +112,7 @@ import { RowRetention } from '../monitor/retention'
 import { normalizeLaneColorPool, normalizeLaneColorStrategy, planLaneColors, mixLaneColors } from '../monitor/lane-colors'
 import type { LaneColorStrategy } from '../monitor/lane-colors'
 import type { RetainedRow } from '../monitor/retention'
-import type { MonitorSnapshot, ResourceSample } from '../monitor/types'
+import type { MonitorSnapshot, ProcessOwner, ResourceSample } from '../monitor/types'
 
 /** 框架注入的面板文案翻译函数(locale 座位) */
 type PanelTranslate = TranslateNS<typeof PANEL_LOCALE_NAMESPACE>
@@ -138,6 +138,11 @@ interface ShareGroup {
   count: number
   /** 是否为主进程/宿主分组:固定用品牌蓝,不参与系列色轮转 */
   primary?: boolean
+  /**
+   * 是否属于当前会话派生的子代理(会话维度分组用)。
+   * 子代理卡据此把本会话派生的子代理行排在各行之前,并用 `note` 标注。
+   */
+  own?: boolean
   /**
    * 粘性身份键(进程按名称,会话按会话标识):行留存按它记账,
    * 缺席时按同一身份归零保留;缺省时退回 `key`。
@@ -327,20 +332,46 @@ function computeLaneWeights(values: readonly number[]): number[] {
   })
 }
 
-/** 进程维度分组:每个进程一组,保持采集顺序(进程树在前);dsh 主进程标记为主泳道 */
-function groupByProcess(processes: readonly ResourceSample[], rootPid: number, cpuFactor: number): ShareGroup[] {
-  return processes.map((sample) => ({
-    key: String(sample.handle.pid),
-    label: displayName(sample),
-    // 行留存按进程名称记账:同名进程重启(pid 变化)后仍接着原行的计数
-    stickyKey: displayName(sample),
-    ...(sample.handle.pid === rootPid ? { primary: true } : {}),
-    // 采集值为整机口径,按展示口径换算(单核口径下超过 100% 属正常)
-    cpuPercent: scaleCpuPercent(sample.cpuPercent, cpuFactor),
-    memoryPercent: sample.memoryPercent,
-    memoryBytes: sample.memoryBytes,
-    count: 1,
-  }))
+/**
+ * 进程维度分组:每个进程一组,保持采集顺序(进程树在前);dsh 主进程标记为主泳道。
+ * `subagentNote` 给定时,归属为子代理的进程行附该标注(本会话卡用,便于在一串进程里认出子代理)。
+ */
+function groupByProcess(
+  processes: readonly ResourceSample[],
+  rootPid: number,
+  cpuFactor: number,
+  subagentNote?: string,
+): ShareGroup[] {
+  return processes.map((sample) => {
+    const subagent = sample.owner?.subagent === true
+    return {
+      key: String(sample.handle.pid),
+      label: displayName(sample),
+      ...(subagent && subagentNote !== undefined ? { note: subagentNote } : {}),
+      // 行留存按进程名称记账:同名进程重启(pid 变化)后仍接着原行的计数
+      stickyKey: displayName(sample),
+      ...(sample.handle.pid === rootPid ? { primary: true } : {}),
+      // 采集值为整机口径,按展示口径换算(单核口径下超过 100% 属正常)
+      cpuPercent: scaleCpuPercent(sample.cpuPercent, cpuFactor),
+      memoryPercent: sample.memoryPercent,
+      memoryBytes: sample.memoryBytes,
+      count: 1,
+    }
+  })
+}
+
+/** 会话维度分组的选项 */
+interface SessionGroupOptions {
+  /**
+   * 是否把归属为子代理的会话并成一行「子代理」合计(会话维度卡用)。
+   * 子代理卡不合并:那里的每一行本来就都是子代理,合并会把整卡压成一行。
+   */
+  mergeSubagents?: boolean
+  /**
+   * 归属为当前会话派生(本会话自身或其子代理会话)时的行标注;
+   * 返回空值时该行不属于当前会话。子代理卡据此把本会话派生的子代理排前并标注。
+   */
+  ownNote?: (owner: ProcessOwner) => string | undefined
 }
 
 /**
@@ -350,15 +381,16 @@ function groupByProcess(processes: readonly ResourceSample[], rootPid: number, c
  * `mergeSubagents` 为真时,归属为子代理的会话**并成一行「子代理」合计**
  * (会话维度卡与子代理维度卡的分工:前者给各会话的总体开销,后者逐个展示子代理;
  * 若会话卡也逐行列出子代理,它就退化成子代理卡的超集,两卡信息重复)。
- * 子代理卡自己调用时传假:那里的每一行本来就都是子代理,合并会把整卡压成一行。
+ * 子代理卡自己调用时不合并:那里的每一行本来就都是子代理,合并会把整卡压成一行。
  */
 function groupBySession(
   processes: readonly ResourceSample[],
   rootPid: number,
   t: PanelTranslate,
   cpuFactor: number,
-  mergeSubagents = false,
+  options: SessionGroupOptions = {},
 ): ShareGroup[] {
+  const { mergeSubagents = false, ownNote } = options
   const groups = new Map<string, ShareGroup>()
   let host: ShareGroup | undefined
   let unattributed: ShareGroup | undefined
@@ -388,9 +420,12 @@ function groupBySession(
     }
     let group = groups.get(owner.sessionId)
     if (group === undefined) {
+      // 归属为当前会话派生的会话行附标注(own 同时作为子代理卡的排前判据)
+      const note = ownNote?.(owner)
       group = {
         key: owner.sessionId,
         label: owner.label ?? owner.sessionId,
+        ...(note === undefined ? {} : { note, own: true }),
         cpuPercent: 0,
         memoryPercent: 0,
         memoryBytes: 0,
@@ -830,6 +865,8 @@ function ShareTrack(props: {
           borderRadius: 999,
           background: PANEL_SHARE_TRACK_COLOR,
           overflow: 'hidden',
+          // 泳道内文本只作视觉标注:禁止选中复制,避免误复制进程名/会话名或拖出选区高亮
+          userSelect: 'none',
         }}
       >
         {/* 左端泳道:与 dsh 无关的系统进程合计 */}
@@ -978,6 +1015,11 @@ function DimensionCard(props: {
   row: (group: ShareGroup, index: number, sampled: boolean) => ReactNode
   /** 每行本轮是否采样到(与 `groups` 同序;缺省视为全部采样到) */
   sampled?: readonly boolean[]
+  /**
+   * 头部第二行元信息(如本会话卡的「其中子代理」合计);
+   * 单列出来而不并进第一行,避免窄卡片下把计数与合计挤成省略号。
+   */
+  extraMeta?: string
   emptyText: string
   ariaLabel: string
   /** 卡片内容(泳道图 + 明细表)是否展开:由上层持有,便于把折叠状态写进本地偏好 */
@@ -1026,19 +1068,32 @@ function DimensionCard(props: {
 
   return (
     <div style={cardStyle}>
-      {/* 头部整行是折叠开关:标题即入口,左侧用宿主 chevron 图标指示展开状态 */}
-      <button type="button" className="sm-card-head" aria-expanded={props.open} title={toggleLabel} onClick={props.onToggle}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', flex: 'none', color: PANEL_TEXT_SECONDARY_COLOR }}>
-          {props.open ? <IconChevronDownOutlineRegular /> : <IconChevronRightOutlineRegular />}
+      {/* 头部整行是折叠开关:标题即入口,左侧用宿主 chevron 图标指示展开状态;
+          第二行(如「其中子代理」合计)只在给定时出现,仍属头部整行开关的点击范围 */}
+      <button
+        type="button"
+        className="sm-card-head"
+        style={props.extraMeta === undefined ? undefined : { flexDirection: 'column', alignItems: 'stretch', gap: 2 }}
+        aria-expanded={props.open}
+        title={toggleLabel}
+        onClick={props.onToggle}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', minWidth: 0 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', flex: 'none', color: PANEL_TEXT_SECONDARY_COLOR }}>
+            {props.open ? <IconChevronDownOutlineRegular /> : <IconChevronRightOutlineRegular />}
+          </span>
+          <span style={{ color: PANEL_TEXT_SECONDARY_COLOR, flex: 'none', ...PANEL_TYPOGRAPHY.baseStrong }}>{props.title}</span>
+          <span style={cardMetaStyle}>
+            {props.countText}
+            {' · '}
+            {props.t('chart.headerTotal', { metric: props.t('table.column.cpu'), value: formatPercent(cpuTotal) })}
+            {' · '}
+            {props.t('chart.headerTotal', { metric: props.t('table.column.memory'), value: formatPercent(memoryTotal) })}
+          </span>
         </span>
-        <span style={{ color: PANEL_TEXT_SECONDARY_COLOR, flex: 'none', ...PANEL_TYPOGRAPHY.baseStrong }}>{props.title}</span>
-        <span style={cardMetaStyle}>
-          {props.countText}
-          {' · '}
-          {props.t('chart.headerTotal', { metric: props.t('table.column.cpu'), value: formatPercent(cpuTotal) })}
-          {' · '}
-          {props.t('chart.headerTotal', { metric: props.t('table.column.memory'), value: formatPercent(memoryTotal) })}
-        </span>
+        {props.extraMeta === undefined ? null : (
+          <span style={{ ...cardMetaStyle, paddingLeft: 20 }}>{props.extraMeta}</span>
+        )}
       </button>
       {!props.open ? null : (
         <>
@@ -1552,40 +1607,76 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   /** 状态文案与语气:徽章与读屏播报共用同一口径,避免两处判定漂移 */
   const statusLabel = unavailable ? t('stat.unavailable') : snapshot.degraded ? t('stat.degraded') : t('stat.normal')
   const statusTone: 'ok' | 'warn' = unavailable || snapshot.degraded ? 'warn' : 'ok'
+  /**
+   * 当前会话标识:由会话座位标准 props 注入(merged by 宿主的 ui-session,本地未安装其类型包),
+   * 故按最小类型面取值:运行时为 branded 字符串,缺失时退化为空串(卡片显示空态)。
+   * 会话谱系来自样本归属的 `lineage`(宿主 `SessionHeader.parentSession` 逐级上溯),
+   * 故「当前会话」口径含其派生的子代理会话,而不是只认与会话标识完全相等的那一个会话。
+   */
+  const injectedSessionId = (props as { sessionId?: unknown }).sessionId
+  const currentSessionId = typeof injectedSessionId === 'string' ? injectedSessionId : ''
+  /** 该归属是否就是当前会话或其子代理会话(即当前会话派生) */
+  const belongsToCurrentSession = (owner: ProcessOwner): boolean =>
+    currentSessionId.length > 0 &&
+    (owner.sessionId === currentSessionId || (owner.lineage ?? []).includes(currentSessionId))
   // 本轮采样到的分组(留存前的原始结果)
   const sampledProcessGroups = groupByProcess(processes, snapshot.rootPid, cpuFactor)
   // 会话卡把全部子代理并成一行「子代理」合计(逐个展示子代理是子代理卡的事)
-  const sampledSessionGroups = groupBySession(processes, snapshot.rootPid, t, cpuFactor, true)
+  const sampledSessionGroups = groupBySession(processes, snapshot.rootPid, t, cpuFactor, { mergeSubagents: true })
   /**
    * 子代理维度:只取归属为子代理(subagent 派生)的进程,按会话分组。
    * 子代理开销常被父会话掩盖,单独成卡后其资源占用不再分散在会话卡的多行里;
    * 过滤后不会出现宿主与未归因组(样本本身已被过滤掉),故分组结果只有子代理。
+   * 属于当前会话派生的子代理附「本会话」标注(排序时排在各行之前),使「我的子代理」可辨认。
    */
   const sampledSubagentGroups = groupBySession(
     processes.filter((sample) => sample.owner?.subagent === true),
     snapshot.rootPid,
     t,
     cpuFactor,
+    { ownNote: (owner) => (belongsToCurrentSession(owner) ? t('subagent.current') : undefined) },
   )
   /**
-   * 本会话维度:只取归属为当前会话(所在 tab 的会话标识)的进程,按进程维度分组。
-   * 会话标识由会话座位标准 props 注入(merged by 宿主的 ui-session,本地未安装其类型包),
-   * 故按最小类型面取值:运行时为 branded 字符串,缺失时退化为空串(卡片显示空态)。
+   * 本会话维度:取归属为当前会话**及其派生的子代理会话**的进程,按进程维度逐条分组
+   * (子代理进程逐条列出便于看清是哪个进程,其合计另由卡头给出)。
    */
-  const injectedSessionId = (props as { sessionId?: unknown }).sessionId
-  const currentSessionId = typeof injectedSessionId === 'string' ? injectedSessionId : ''
-  const currentSessionProcesses =
-    currentSessionId.length === 0
-      ? []
-      : processes.filter((sample) => sample.owner !== undefined && sample.owner.sessionId === currentSessionId)
-  const sampledCurrentSessionGroups = groupByProcess(currentSessionProcesses, snapshot.rootPid, cpuFactor)
+  const currentSessionProcesses = processes.filter(
+    (sample) => sample.owner !== undefined && belongsToCurrentSession(sample.owner),
+  )
+  const sampledCurrentSessionGroups = groupByProcess(
+    currentSessionProcesses,
+    snapshot.rootPid,
+    cpuFactor,
+    t('session.subagent'),
+  )
+  /** 本会话派生的子代理进程(卡头的「其中子代理」合计只在这些进程存在时给出) */
+  const currentSessionSubagentProcesses = currentSessionProcesses.filter((sample) => sample.owner?.subagent === true)
+  /**
+   * 本会话卡头部的第二行元信息(「其中子代理」合计,只在存在子代理进程时给出)。
+   * 分隔符与头部第一行的计数与合计同源(` · `),两行读数口径一致。
+   */
+  const currentSessionSubagentMeta = currentSessionSubagentProcesses.length === 0
+    ? undefined
+    : [
+      t('currentProcess.subagentCount', { count: currentSessionSubagentProcesses.length }),
+      t('chart.headerTotal', {
+        metric: t('table.column.cpu'),
+        value: formatPercent(
+          currentSessionSubagentProcesses.reduce((sum, sample) => sum + scaleCpuPercent(sample.cpuPercent, cpuFactor), 0),
+        ),
+      }),
+      t('chart.headerTotal', {
+        metric: t('table.column.memory'),
+        value: formatPercent(currentSessionSubagentProcesses.reduce((sum, sample) => sum + sample.memoryPercent, 0)),
+      }),
+    ].join(' · ')
 
   /**
    * 表格排序:在留存之前对「本轮采样到的行」排序(未采样行按留存顺序附在其后),
    * 故明细表与占比条泳道共用同一顺序;宿主与未归因行保持固定位置(宿主最前,未归因最后)。
+   * `ownFirst` 为真时(子代理卡),属于当前会话派生的子代理排在各行之前(默认顺序下也如此)。
    */
-  const applySort = (groups: ShareGroup[]): ShareGroup[] => {
-    if (tableSort === 'default') return groups
+  const applySort = (groups: ShareGroup[], ownFirst = false): ShareGroup[] => {
     // 固定位次:宿主最前,子代理合计行紧随各会话之后,未归因最后(排序不改变这三者的相对位置)
     const pinned = (group: ShareGroup): number =>
       group.key === HOST_GROUP_KEY
@@ -1594,7 +1685,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           ? 2
           : group.key === SUBAGENT_GROUP_KEY
             ? 1
-            : 0
+            : ownFirst && group.own === true
+              ? -1
+              : 0
+    if (tableSort === 'default') return ownFirst ? sortRows(groups, () => 0, pinned) : groups
     if (tableSort === 'name') return sortRows(groups, (a, b) => a.label.localeCompare(b.label), pinned)
     const weight = tableSort === 'cpu'
       ? (group: ShareGroup): number => group.cpuPercent
@@ -1624,7 +1718,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       current: applySort(sampledCurrentSessionGroups),
       process: applySort(sampledProcessGroups),
       conversation: applySort(sampledSessionGroups),
-      subagent: applySort(sampledSubagentGroups),
+      subagent: applySort(sampledSubagentGroups, true),
     }
     const rows: Record<PanelCardId, RetainedRow<ShareGroup>[]> = { current: [], process: [], conversation: [], subagent: [] }
     for (const id of PANEL_CARD_IDS) {
@@ -1708,6 +1802,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     totalMemoryBytes: snapshot.memoryLimitBytes ?? snapshot.totalMemoryBytes,
   }
   /**
+   * 行显示名:带标注时拼上标注(如本会话卡里子代理进程行的「子代理」、
+   * 子代理卡里属于本会话的子代理行的「本会话」);列宽,单元格与快照导出共用同一口径。
+   */
+  const rowLabel = (group: ShareGroup): string =>
+    group.note === undefined ? group.label : `${group.label} · ${group.note}`
+  /**
    * 把当前快照整理为纯文本(用户显式触发的导出内容)。
    * 导出只在本机剪贴板落地,不经任何 dsh 通道,也不写回采集器;口径与面板展示一致。
    */
@@ -1727,14 +1827,16 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       countText: string,
       groups: readonly ShareGroup[],
       sampled: readonly boolean[],
+      extraMeta?: string,
     ): void => {
       lines.push('', `${title} (${countText})`)
+      if (extraMeta !== undefined) lines.push(extraMeta)
       groups.forEach((group, index) => {
         const stale = sampled[index] === false ? ` · ${t('row.unsampled')}` : ''
-        lines.push(`- ${group.label}: ${formatPercent(group.cpuPercent)} / ${formatBytes(group.memoryBytes)} / ${formatPercent(group.memoryPercent)}${stale}`)
+        lines.push(`- ${rowLabel(group)}: ${formatPercent(group.cpuPercent)} / ${formatBytes(group.memoryBytes)} / ${formatPercent(group.memoryPercent)}${stale}`)
       })
     }
-    appendCard(t('currentProcess.title'), t('currentProcess.count', { count: currentSessionGroups.length }), currentSessionGroups, currentCard.sampled)
+    appendCard(t('currentProcess.title'), t('currentProcess.count', { count: currentSessionGroups.length }), currentSessionGroups, currentCard.sampled, currentSessionSubagentMeta)
     appendCard(t('table.title'), t('table.count', { count: processGroups.length }), processGroups, processCard.sampled)
     appendCard(t('session.title'), t('session.count', { count: sessionCount }), sessionGroups, sessionCard.sampled)
     appendCard(t('subagent.title'), t('subagent.count', { count: subagentGroups.length }), subagentGroups, subagentCard.sampled)
@@ -1890,7 +1992,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     actionColumn(),
   ]
   /** 会话维度表的列定义(首列显示会话名,子代理带标注) */
-  const sessionLabels = sessionGroups.map((group) => (group.note === undefined ? group.label : `${group.label} · ${group.note}`))
+  const sessionLabels = sessionGroups.map(rowLabel)
   const sessionColumns: PanelColumn[] = [
     { head: head(t('session.column.session')), contentWidth: nameColumnWidth(sessionLabels) },
     {
@@ -1917,11 +2019,14 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     }] : []),
     actionColumn(),
   ]
-  /** 本会话维度表的列定义(全部行同属当前会话,故不设会话列) */
+  /**
+   * 本会话维度表的列定义(全部行同属当前会话及其派生的子代理,故不设会话列;
+   * 子代理进程行在名称后带「子代理」标注,与会话卡把子代理并成合计行的口径互补)
+   */
   const currentSessionColumns: PanelColumn[] = [
     {
       head: head(t('table.column.process')),
-      contentWidth: nameColumnWidth(currentSessionGroups.map((group) => group.label)),
+      contentWidth: nameColumnWidth(currentSessionGroups.map(rowLabel)),
     },
     ...(columnVisible('pid') ? [{
       head: head(t('table.column.pid')),
@@ -2009,10 +2114,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           gridTemplateColumns: effectiveColumns === 2 ? 'repeat(2, minmax(0, 1fr))' : '1fr',
         }}
       >
-      {/* 本会话维度卡(最前):只统计当前会话的进程资源 */}
+      {/* 本会话维度卡(最前):统计当前会话及其派生的子代理进程(子代理逐条列出,合计另见卡头) */}
       <DimensionCard
         title={t('currentProcess.title')}
         countText={t('currentProcess.count', { count: currentSessionGroups.length })}
+        extraMeta={currentSessionSubagentMeta}
         groups={currentSessionGroups}
         machine={machine}
         names={laneNames}
@@ -2023,15 +2129,16 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           const sample = sampleByPid.get(group.key)
           const last = index === currentSessionGroups.length - 1
           const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
+          const label = rowLabel(group)
           return (
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
-              {nameCell(group, currentSessionColors[index], group.label, sampled)}
+              {nameCell(group, currentSessionColors[index], label, sampled)}
               {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
               {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
               {valueCell(formatBytes(group.memoryBytes), high)}
               {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
-              {actionCell('current', group, group.label)}
+              {actionCell('current', group, label)}
             </tr>
           )
         }}
@@ -2094,7 +2201,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         sampled={sessionCard.sampled}
         row={(group, index, sampled) => {
           const last = index === sessionGroups.length - 1
-          const label = group.note === undefined ? group.label : `${group.label} · ${group.note}`
+          const label = rowLabel(group)
           const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
@@ -2108,7 +2215,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           )
         }}
       />
-      {/* 子代理维度卡:只统计归属为子代理的进程,使子代理开销不被父会话掩盖 */}
+      {/* 子代理维度卡:统计全部归属为子代理的进程,使子代理开销不被父会话掩盖;
+          属于当前会话派生的子代理排在各行之前并带「本会话」标注 */}
       <DimensionCard
         title={t('subagent.title')}
         countText={t('subagent.count', { count: subagentGroups.length })}
@@ -2124,7 +2232,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         sampled={subagentCard.sampled}
         row={(group, index, sampled) => {
           const last = index === subagentGroups.length - 1
-          const label = group.note === undefined ? group.label : `${group.label} · ${group.note}`
+          const label = rowLabel(group)
           const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
           return (
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>

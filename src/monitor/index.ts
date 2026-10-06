@@ -19,7 +19,7 @@ import { registerReporter } from './reporter'
 /** 宿主 sessions 服务的最小类型面(类型家在各官方包,此处只取用到的能力) */
 interface SessionsFace {
   /** 全部活动会话 */
-  list(): Array<{ header: { id: string; cwd?: string; origin?: string } }>
+  list(): Array<{ header: { id: string; cwd?: string; origin?: string; parentSession?: string } }>
 }
 
 /** 宿主 sessionTitle 服务的最小类型面 */
@@ -40,7 +40,10 @@ interface TerminalsFace {
   list(owner: unknown): Array<{ pid?: number }>
 }
 
-/** 读取宿主会话清单(服务缺失或异常时返回空表) */
+/**
+ * 读取宿主会话清单(服务缺失或异常时返回空表)。
+ * 除显示名与子代理标记外一并取父会话标识:面板据此把子代理会话归入其父会话的维度卡。
+ */
 function readSessionInfos(ctx: Context): SessionInfo[] {
   const sessions = ctx.get('sessions') as unknown as SessionsFace | undefined
   if (!sessions) return []
@@ -53,10 +56,12 @@ function readSessionInfos(ctx: Context): SessionInfo[] {
       : cwd !== undefined && cwd.length > 0
         ? basename(cwd)
         : session.header.id
+    const parentSession = session.header.parentSession
     return {
       sessionId: session.header.id,
       label,
       ...(session.header.origin === 'subagent' ? { subagent: true } : {}),
+      ...(parentSession === undefined || parentSession.length === 0 ? {} : { parentSession }),
     }
   })
 }
