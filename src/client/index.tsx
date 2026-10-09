@@ -2142,7 +2142,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             </tr>
           )
         }}
-        emptyText={t('empty.noCurrentProcesses')}
+        emptyText={currentSessionId.length === 0 ? t('empty.noSessionScope') : t('empty.noCurrentProcesses')}
         ariaLabel={t('currentProcess.title')}
         open={collapsed.current !== true}
         onToggle={() => toggleCard('current')}

@@ -3,8 +3,9 @@
  *
  * 把 OS 级进程样本归到具体会话,来源按优先级:
  *  1. 宿主服务:终端(PTY)会话快照给出 pid ↔ 会话;
- *  2. Agent 汇报:句柄可显式带 sessionId;
- *  3. 子进程环境(Linux/WSL):模型 shell 调用派生的进程带 DSH_SESSION_ID。
+ *  2. 宿主派生锚点:subprocess 派生入口的包装读出子进程 pid 与会话(见 spawn-tracking.ts);
+ *  3. Agent 汇报:句柄可显式带 sessionId;
+ *  4. 子进程环境(Linux/WSL):模型 shell 调用派生的进程带 DSH_SESSION_ID。
  * 环境读取与宿主查询都经注入函数实现,便于独立测试。
  * 归属同时带上会话谱系(祖先会话序列),使子代理会话可归入其父会话的维度卡。
  * 归属仅用于面板分组展示,不改变采样口径,也不向 dsh 主体暴露。
@@ -12,10 +13,11 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { SESSION_ENV_KEY } from '../constants'
 import type { ProcessOwner } from './types'
 
 /** 宿主在模型 shell 调用中注入的会话标识环境变量(Linux/WSL 可经 /proc/<pid>/environ 读回) */
-const SESSION_ENV_KEY = 'DSH_SESSION_ID='
+const SESSION_ENV_PREFIX = `${SESSION_ENV_KEY}=`
 
 /** 沿父进程链向上查找的深度上限(防止异常链成环导致解析失控) */
 const SESSION_SUBTREE_MAX_DEPTH = 32
@@ -57,38 +59,60 @@ export function sessionLineage(
   return ancestors.reverse()
 }
 
+/**
+ * 取发起本次工具调用的会话标识(导出以便纯函数回归)。
+ * 汇报句柄未显式标注会话时按调用方会话归属,模型因此只需报 pid 即可落进正确的会话卡;
+ * 工具不在会话上下文中执行(无调用方 Agent)时返回 undefined,句柄按未归因处理。
+ */
+export function callerSessionId(exec: unknown): string | undefined {
+  const agent = (exec as { agent?: unknown } | null | undefined)?.agent
+  const header = (agent as { session?: { header?: { id?: unknown } } } | null | undefined)?.session?.header
+  const id = header?.id
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
 /** 从 /proc/<pid>/environ 文本中取会话标识(缺失或为空时返回 undefined) */
 export function parseSessionIdFromEnviron(environ: string): string | undefined {
   for (const entry of environ.split('\0')) {
-    if (!entry.startsWith(SESSION_ENV_KEY)) continue
-    const value = entry.slice(SESSION_ENV_KEY.length)
+    if (!entry.startsWith(SESSION_ENV_PREFIX)) continue
+    const value = entry.slice(SESSION_ENV_PREFIX.length)
     if (value.length > 0) return value
   }
   return undefined
 }
 
 /**
- * 沿父进程链向上查找终端(PTY)锚点所属会话(导出以便纯函数回归)。
+ * 沿父进程链向上查找锚点所属会话(导出以便纯函数回归)。
  *
- * 终端服务只给出该会话的**顶层**终端 pid,而模型 shell 调用会继续派生子进程,
+ * 锚点(终端或宿主派生锚点)只给出**顶层**进程标识,而模型 shell 调用会继续派生子进程,
  * 故整棵后代子树都应归给同一会话;这里从该进程的父进程开始逐级上溯,
- * 命中终端 pid 即返回其会话;链中断、成环或超过深度上限时返回 undefined。
+ * 命中锚点即返回其会话;链中断、成环或超过深度上限时返回 undefined。
  */
-export function terminalAncestor(
+export function ownerAncestor(
   pid: number,
   parents: ReadonlyMap<number, number | null>,
-  terminals: ReadonlyMap<number, string>,
+  anchors: ReadonlyMap<number, string>,
   maxDepth: number = SESSION_SUBTREE_MAX_DEPTH,
 ): string | undefined {
   let current = pid
   for (let depth = 0; depth < maxDepth; depth += 1) {
     const parent = parents.get(current)
     if (parent === undefined || parent === null || parent === current) return undefined
-    const session = terminals.get(parent)
+    const session = anchors.get(parent)
     if (session !== undefined) return session
     current = parent
   }
   return undefined
+}
+
+/** 终端(PTY)锚点的子树归属(语义化别名,与派生锚点共用同一上溯规则) */
+export function terminalAncestor(
+  pid: number,
+  parents: ReadonlyMap<number, number | null>,
+  terminals: ReadonlyMap<number, string>,
+  maxDepth: number = SESSION_SUBTREE_MAX_DEPTH,
+): string | undefined {
+  return ownerAncestor(pid, parents, terminals, maxDepth)
 }
 
 /**
@@ -102,6 +126,8 @@ export class OwnerResolver {
   private readonly cached = new Map<number, ProcessOwner | null>()
   /** 终端来源映射(pid → 会话标识) */
   private terminals = new Map<number, string>()
+  /** 宿主派生锚点(pid → 会话标识):派生窗口内创建的子进程及其子树归该会话 */
+  private readonly spawnAnchors = new Map<number, string>()
   /** 汇报来源映射(pid → 会话标识) */
   private reported = new Map<number, string>()
   /** 会话元信息(会话标识 → 显示名等) */
@@ -127,6 +153,15 @@ export class OwnerResolver {
     this.lineages.clear()
   }
 
+  /**
+   * 并入新解析到的宿主派生锚点(每轮采样前调用)。
+   * 锚点一经并入即长期生效,直到该进程从采样集合里消失(见 `resolve` 的裁剪),
+   * 故同一次派生窗口只需上报一次。
+   */
+  updateSpawnAnchors(anchors: ReadonlyMap<number, string>): void {
+    for (const [pid, sessionId] of anchors) this.spawnAnchors.set(pid, sessionId)
+  }
+
   /** 记录 Agent 汇报句柄的会话归属(显式标注优先于环境推断) */
   setReported(pid: number, sessionId: string | undefined): void {
     if (sessionId === undefined || sessionId.length === 0) this.reported.delete(pid)
@@ -145,6 +180,7 @@ export class OwnerResolver {
     const alive = new Set(pids)
     for (const pid of [...this.cached.keys()]) if (!alive.has(pid)) this.cached.delete(pid)
     for (const pid of [...this.reported.keys()]) if (!alive.has(pid)) this.reported.delete(pid)
+    for (const pid of [...this.spawnAnchors.keys()]) if (!alive.has(pid)) this.spawnAnchors.delete(pid)
     return owners
   }
 
@@ -156,8 +192,12 @@ export class OwnerResolver {
     const terminalSession = this.terminals.get(pid)
     if (terminalSession !== undefined) return this.decorate(terminalSession)
 
-    // 终端 pid 的整棵后代子树同属该会话(终端服务只给顶层 pid,模型 shell 派生链需上溯补齐)
+    const spawnSession = this.spawnAnchors.get(pid)
+    if (spawnSession !== undefined) return this.decorate(spawnSession)
+
+    // 锚点的整棵后代子树同属该会话(锚点只给顶层 pid,模型 shell 派生链需上溯补齐)
     const subtreeSession = terminalAncestor(pid, this.parents, this.terminals)
+      ?? ownerAncestor(pid, this.parents, this.spawnAnchors)
     if (subtreeSession !== undefined) return this.decorate(subtreeSession)
 
     const reportedSession = this.reported.get(pid)

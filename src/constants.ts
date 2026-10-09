@@ -60,6 +60,13 @@ export const REPORT_TOOL_NAME = 'system_monitor_report'
 export const QUERY_TIMEOUT_MS = 10000
 
 /**
+ * 会话标识环境变量名:宿主在每次模型 shell 调用时把它注入子进程环境(见宿主 shell-env 注册表)。
+ * Linux 与 WSL 可经 `/proc/<pid>/environ` 读回;Windows 与 macOS 读不到进程环境,
+ * 改经宿主 subprocess 派生入口的入参读回(见 monitor/spawn-tracking.ts)。
+ */
+export const SESSION_ENV_KEY = 'DSH_SESSION_ID'
+
+/**
  * Linux 时钟节拍兜底值(/proc 时间字段单位,标准 USER_HZ):
  * 首次运行时会探测真实值并缓存(见 monitor/clock-ticks.ts),
  * 探测不可信或非 Linux 平台时用该值。

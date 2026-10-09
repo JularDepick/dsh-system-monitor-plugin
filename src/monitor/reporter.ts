@@ -10,6 +10,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { REPORT_TOOL_NAME } from '../constants'
+import { callerSessionId } from './attribution'
 import type { ProcessCollector } from './collector'
 import type { ProcessHandle, ReportReceipt } from './types'
 
@@ -44,7 +45,7 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
             pid: { type: 'number', required: true, description: '进程标识' },
             name: { type: 'string', description: '进程可读名称' },
             parentPid: { type: 'number', description: '父进程标识' },
-            sessionId: { type: 'string', description: '所属会话标识(用于面板按会话分组)' },
+            sessionId: { type: 'string', description: '所属会话标识(缺省取发起本次调用的会话)' },
           },
           additionalProperties: false,
         },
@@ -54,8 +55,9 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: value }],
     },
-    async execute(args) {
+    async execute(args, exec) {
       const list = Array.isArray(args.handles) ? (args.handles as unknown[]) : []
+      const fallbackSession = callerSessionId(exec)
       const rejected: ReportReceipt['rejected'] = []
       const accepted: ProcessHandle[] = []
       const seen = new Set<number>()
@@ -70,7 +72,10 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
         // 重复句柄按合并处理,不重复统计
         if (seen.has(handle.pid)) continue
         seen.add(handle.pid)
-        accepted.push(handle)
+        // 未显式标注会话时按调用方会话归属(模型只报 pid 也能落进正确的会话维度)
+        accepted.push(handle.sessionId === undefined && fallbackSession !== undefined
+          ? { ...handle, sessionId: fallbackSession }
+          : handle)
       }
       collector.mergeReported(accepted)
       const detail = rejected.length > 0 ? `;拒绝 ${rejected.length} 项` : ''
