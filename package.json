@@ -1,6 +1,6 @@
 {
   "name": "dsh-system-monitor-plugin",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "监控 dsh 进程及其子进程的资源占用,提供进程句柄汇报工具与 UI 面板展示",
   "license": "Apache-2.0",
   "repository": {
@@ -9,7 +9,7 @@
   },
   "engines": {
     "node": ">=20",
-    "dsh": "0.2.0-rc.2 || 0.2.1-rc.1"
+    "dsh": "0.2.0-rc.2 || 0.2.1-rc.1 || 0.2.1-rc.2"
   },
   "type": "module",
   "main": "./dist/index.mjs",
@@ -44,7 +44,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-rc.1"
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-rc.1 || 0.2.1-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
