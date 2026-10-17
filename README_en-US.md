@@ -13,6 +13,8 @@
 
 A plugin for dsh: monitor the resource utilization of dsh system processes, and report the results to the user in the form of charts
 
+Supports dsh 0.2.0-rc.2 and 0.2.1-rc.1
+
 ---
 
 
@@ -20,7 +22,7 @@ A plugin for dsh: monitor the resource utilization of dsh system processes, and 
 
 - Automatic collection: CPU usage percentage and memory usage of the dsh process and its child processes (auto-scaled KB/MB/GB; percentages in three tiers: exactly 0 shown as `0%`, below 0.01% shown as `<0.01%`, otherwise two decimals)
 - Container quota basis: percentages are computed against the CPU and memory quota of the running environment itself (falling back to the visible totals when no quota is readable), so readings inside a container are not diluted by host totals
-- Session attribution: processes are attributed to sessions through terminal mapping, explicit reporting and session environment variables, and the panel presents them across four dimensions: this session / all processes / sessions / subagents
+- Session attribution: processes are attributed to sessions through terminal mapping, explicit reporting, session environment variables and the child processes spawned by commands run in a session (Windows and macOS read back the spawned child process through the host subprocess entry), and the panel presents them across four dimensions: this session / all processes / sessions / subagents
 - Standalone palette: the panel uses its own blue-and-white palette (light and dark variants); share bars and table swatches are colored by role, with a fixed semantic color for the main process and host, the subagent total, other applications and idle
 - Lane color pool: ordinary processes and sessions take pool colors in order, and the pool can be added to, edited or trimmed in the plugin config and in the panel settings sub-page (16 colors by default); when there are more members than pool colors the lane color strategy decides, recycling existing colors (default) or auto-inserting the midpoint between two neighbouring colors and saving it into the config
 - Handle reporting: a reporting tool allows the Agent to report process handles (e.g. subagent processes) that the plugin cannot identify on its own
@@ -32,6 +34,8 @@ A plugin for dsh: monitor the resource utilization of dsh system processes, and 
 This release supports both dsh 0.2.0-rc.2 and 0.2.1-rc.1: dsh enforces a plugin's dsh-prefixed `peerDependencies` since 0.2.0-rc.2, and since 0.2.1-rc.1 it decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored); this plugin declares the same supported set in both places, and any dsh version outside that set is refused at installation and at startup
 
 This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical
+
+Upgrading from an older version only needs the new package: plugin config and panel local preferences carry over unchanged, and reported handles are reported again by the Agent when needed
 
 Install this plugin into a dsh profile:
 
