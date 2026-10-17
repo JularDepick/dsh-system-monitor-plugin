@@ -2,7 +2,7 @@
 
 > 面向 dsh 插件开发者:总结外部插件为 dsh Web GUI 贡献 UI(尤其是新增 tab 页)的完整机制与落地要点
 > 以会话区域「对话/轨迹」视图标签栏新增 tab 为实例,同样适用于「设置-插件」页等其他挂载点
-> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对,已按 0.1.5-rc.1,0.1.7-rc.2 与 0.2.0-rc.2 发布包复核更新(平台模块表,槽 owner props,槽锚点与视图容器样式,客户端发现机制);本经验为静态总结,换版本时以对应发布包类型声明为准
+> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对,已按 0.1.5-rc.1,0.1.7-rc.2 与 0.2.0-rc.2 发布包复核更新(平台模块表,槽 owner props,槽锚点与视图容器样式,客户端发现机制),并按 0.2.1-rc.1 发布包复核平台模块表,槽契约与标准 props 来源(视图容器样式未逐项复测);本经验为静态总结,换版本时以对应发布包类型声明为准
 
 ## 一,总体流程(五个步骤)
 
@@ -68,15 +68,16 @@ ctx.slots.inject('conversation.view', () => ctx.slots.register({
 | define | `process.env.NODE_ENV` 与 `import.meta.env.MODE`(zustand 等内联库需要) |
 | CSS Modules | 自定义插件:lightningcss 编译 `.module.css` 为 hashed classMap + 注入 `<style data-plugin>`(tsdown 自带 css 管线不处理,需虚拟 id 包装,后缀不能是 `.css`) |
 
-平台模块表(宿主冻结模块表中的 seed 词,0.2.0-rc.2 取发布包 `@deepseek-ai/dsh-web-frontend` 前端产物中的 `PLATFORM_MODULES` 表,与 0.1.7-rc.2,0.1.5-rc.1 逐项一致):
+平台模块表(宿主冻结模块表中的 seed 词,取发布包 `@deepseek-ai/dsh-web-frontend` 前端产物中的 `PLATFORM_MODULES` 表;下面按 0.2.1-rc.1 列出,0.2.0-rc.2 及更早版本为同一表去掉 `zod` 与 `@tanstack/react-virtual` 两项):
 
 ```
-react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
-@deepseek-ai/dsh-client-store, @deepseek-ai/dsh-client-ui-slots,
-@deepseek-ai/dsh-client-ui-primitives, @deepseek-ai/dsh-client-ui-dockkit
+react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
+@tanstack/react-virtual, @deepseek-ai/dsh-client-store,
+@deepseek-ai/dsh-client-ui-slots, @deepseek-ai/dsh-client-ui-primitives,
+@deepseek-ai/dsh-client-ui-dockkit
 ```
 
-> 0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须与该表逐项一致,多余外部化会在浏览器端解析失败;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`)
+> 0.2.1-rc.1 相比 0.2.0-rc.2 新增 `zod` 与 `@tanstack/react-virtual`;0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须是该表的子集(只列本插件真正 value-import 的包),多余外部化会在浏览器端解析失败,写成子集才能在 0.2.0-rc.2 与 0.2.1-rc.1 上通用;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`)
 
 ### 2. 跨插件协作纪律(构建期 purity 门强制)
 
@@ -124,7 +125,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis,
 
 ## 五,参考文件索引(官方仓库)
 
-> 路径指向所示时期的仓库快照(本经验已按 dsh-v0.1.5-rc.1 复核 platform.ts 与 ui-trajectory 注册范例仍有效;0.1.7-rc.2 与 0.2.0-rc.2 按发布包前端产物与 `.d.ts` 类型声明复核平台模块表,槽契约,槽锚点与视图容器样式);判断最新行为以官方仓库现况为准
+> 路径指向所示时期的仓库快照(本经验已按 dsh-v0.1.5-rc.1 复核 platform.ts 与 ui-trajectory 注册范例仍有效;0.1.7-rc.2 与 0.2.0-rc.2 按发布包前端产物与 `.d.ts` 类型声明复核平台模块表,槽契约,槽锚点与视图容器样式,0.2.1-rc.1 复核平台模块表与槽契约);判断最新行为以官方仓库现况为准
 
 | 文件 | 用途 |
 |:---:|:---:|

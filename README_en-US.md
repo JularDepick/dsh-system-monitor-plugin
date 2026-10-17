@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.2.2-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.2.2)
+[![Version](https://img.shields.io/badge/Version-0.2.3-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.2.3)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -29,7 +29,7 @@ A plugin for dsh: monitor the resource utilization of dsh system processes, and 
 
 ## Installation
 
-This release targets dsh 0.2.0-rc.2; since dsh 0.2.0-rc.2, dsh enforces the dsh-prefixed `peerDependencies` of a plugin (a mismatched plugin is refused both at installation and at startup), so the plugin version must be installed against the matching dsh version
+This release supports both dsh 0.2.0-rc.2 and 0.2.1-rc.1: dsh enforces a plugin's dsh-prefixed `peerDependencies` since 0.2.0-rc.2, and since 0.2.1-rc.1 it decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored); this plugin declares the same supported set in both places, and any dsh version outside that set is refused at installation and at startup
 
 This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical
 
@@ -42,7 +42,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 When distributing a tarball:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.2.2.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.2.3.tgz
 ```
 
 
