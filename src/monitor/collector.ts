@@ -187,6 +187,25 @@ export class LinuxProcQuery implements ProcessQuery {
     return this.unreadableCount
   }
 
+  /**
+   * 进程显示名:取 `/proc/<pid>/cmdline` 首个参数的文件名。
+   * `stat` 的 comm 是**线程名**而非程序名,Node 一类运行时会把它改成 `MainThread`,
+   * 面板上整排宿主进程就都成了同一个无意义的名字;cmdline 给出的才是可执行文件名
+   * (`node`,`bash`,`systemd-run`),与 `ps` 的观感一致。
+   * cmdline 为空(内核线程,僵尸)或读不到时退回 comm,两者都空则退回 pid。
+   */
+  private readName(pid: number, comm: string): string {
+    try {
+      const raw = readFileSync(join(this.root, String(pid), 'cmdline'), 'utf8')
+      const argv0 = raw.split('\0')[0]?.trim() ?? ''
+      const base = argv0.length > 0 ? executableBaseName(argv0) : ''
+      if (base.length > 0) return base
+    } catch {
+      // 进程已退出或无权限:退回 comm
+    }
+    return comm.length > 0 ? comm : String(pid)
+  }
+
   async query(): Promise<ProcessRecord[]> {
     const records: ProcessRecord[] = []
     const bootTimeMs = this.readBootTimeMs()
@@ -237,7 +256,7 @@ export class LinuxProcQuery implements ProcessQuery {
     const record: ProcessRecord = {
       pid,
       parentPid: Number.isInteger(parentPid) ? parentPid : null,
-      name: stat.slice(nameStart + 1, nameEnd).trim() || String(pid),
+      name: this.readName(pid, stat.slice(nameStart + 1, nameEnd).trim()),
       cpuSeconds: ((Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0)) / this.clkTck,
       workingSetBytes: rssMatch ? Number(rssMatch[1]) * 1024 : 0,
     }

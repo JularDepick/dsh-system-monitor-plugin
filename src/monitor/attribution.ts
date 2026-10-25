@@ -7,14 +7,26 @@
  *  3. Agent 汇报:句柄可显式带 sessionId;
  *  4. 子进程环境(Linux/WSL):模型 shell 调用派生的进程带 DSH_SESSION_ID。
  * 环境读取与宿主查询都经注入函数实现,便于独立测试。
+ * 第 2 条在所有平台启用,与第 4 条互补而非互为兜底:Linux 上宿主经 systemd 瞬态 scope 派生时,
+ * 直接子进程的环境里没有会话标识(标识由内部 runner 从启动文件再应用),只有链尾进程读得到。
+ * 环境读取失败与确认无该变量分属两种结果,前者按轮次有界重试后才放弃(见 ENVIRON_RETRY_LIMIT)。
  * 归属同时带上会话谱系(祖先会话序列),使子代理会话可归入其父会话的维度卡。
  * 归属仅用于面板分组展示,不改变采样口径,也不向 dsh 主体暴露。
  * 作者:JularDepick
  */
 
 import { readFileSync } from 'node:fs'
-import { SESSION_ENV_KEY } from '../constants'
+import { ENVIRON_RETRY_LIMIT, SESSION_ENV_KEY } from '../constants'
 import type { ProcessOwner } from './types'
+
+/**
+ * 进程环境探测结果:区分「读到」与「读取失败」两种情形。
+ * 读到即环境已定型(进程生命周期内不变),没有该变量属确认无归属,可以长期缓存;
+ * 读取失败(权限不足,进程刚派生尚未 exec)属可恢复情形,不得写入归属缓存。
+ */
+export type EnvironProbe =
+  | { readonly readable: true; readonly environ: string }
+  | { readonly readable: false }
 
 /** 宿主在模型 shell 调用中注入的会话标识环境变量(Linux/WSL 可经 /proc/<pid>/environ 读回) */
 const SESSION_ENV_PREFIX = `${SESSION_ENV_KEY}=`
@@ -136,11 +148,13 @@ export class OwnerResolver {
   private readonly lineages = new Map<string, string[]>()
   /** 本轮采样的父子关系(pid → 父 pid;用于终端子树归属) */
   private parents: ReadonlyMap<number, number | null> = new Map()
+  /** 环境读取失败计数(pid → 连续失败轮数;达上限才按无归属处理并随 pid 消失裁剪) */
+  private readonly environFailures = new Map<number, number>()
 
   /** 构造解析器 */
   constructor(
-    /** 读取指定进程的环境文本(不可读时返回 undefined) */
-    private readonly readEnviron: (pid: number) => string | undefined,
+    /** 探测指定进程的环境文本(读失败与读到区分结果,见 EnvironProbe) */
+    private readonly readEnviron: (pid: number) => EnvironProbe,
     /** 宿主进程标识(不参与归属) */
     private readonly rootPid: number,
   ) {}
@@ -181,6 +195,7 @@ export class OwnerResolver {
     for (const pid of [...this.cached.keys()]) if (!alive.has(pid)) this.cached.delete(pid)
     for (const pid of [...this.reported.keys()]) if (!alive.has(pid)) this.reported.delete(pid)
     for (const pid of [...this.spawnAnchors.keys()]) if (!alive.has(pid)) this.spawnAnchors.delete(pid)
+    for (const pid of [...this.environFailures.keys()]) if (!alive.has(pid)) this.environFailures.delete(pid)
     return owners
   }
 
@@ -206,11 +221,20 @@ export class OwnerResolver {
     const cached = this.cached.get(pid)
     if (cached !== undefined) return cached ?? undefined
 
-    const environ = this.readEnviron(pid)
-    const sessionId = environ === undefined ? undefined : parseSessionIdFromEnviron(environ)
-    const owner = sessionId === undefined ? null : this.decorate(sessionId)
-    this.cached.set(pid, owner)
-    return owner ?? undefined
+    const probe = this.readEnviron(pid)
+    if (probe.readable) {
+      const sessionId = parseSessionIdFromEnviron(probe.environ)
+      const owner = sessionId === undefined ? null : this.decorate(sessionId)
+      this.cached.set(pid, owner)
+      this.environFailures.delete(pid)
+      return owner ?? undefined
+    }
+    // 读失败不写缓存:进程环境要到 exec 才定型,此刻读到的是失败而非「没有该变量」,
+    // 钉成无归属会让该 pid 在整个生命周期内都落进未归因组,故按轮次有界重试
+    const failures = (this.environFailures.get(pid) ?? 0) + 1
+    this.environFailures.set(pid, failures)
+    if (failures >= ENVIRON_RETRY_LIMIT) this.cached.set(pid, null)
+    return undefined
   }
 
   /** 组装归属对象(补上会话显示名,子代理标记与祖先会话谱系) */
@@ -230,13 +254,13 @@ export class OwnerResolver {
   }
 }
 
-/** 读取进程环境文本(Linux/WSL 经 /proc;其它平台返回 undefined) */
-export function readProcessEnviron(pid: number): string | undefined {
-  if (process.platform !== 'linux') return undefined
+/** 探测进程环境文本(Linux/WSL 经 /proc;其它平台一律按不可读) */
+export function readProcessEnviron(pid: number): EnvironProbe {
+  if (process.platform !== 'linux') return { readable: false }
   try {
-    // 进程环境在生命周期内不变;读取失败(权限、进程已退出)按无归属处理
-    return readFileSync(`/proc/${pid}/environ`, 'utf8')
+    // 进程环境在 exec 后定型;读取失败(权限不足,进程刚派生尚未 exec)由调用方按轮次重试
+    return { readable: true, environ: readFileSync(`/proc/${pid}/environ`, 'utf8') }
   } catch {
-    return undefined
+    return { readable: false }
   }
 }

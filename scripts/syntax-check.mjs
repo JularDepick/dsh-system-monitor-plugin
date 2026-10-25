@@ -35,6 +35,8 @@ const failures = []
 for (const file of targets) {
   const ext = extname(file)
   if (!['.ts', '.tsx', '.mjs', '.cjs', '.js'].includes(ext)) continue
+  // 类型声明副本只由 tsc 消费,transpileModule 对其无产出(第三方 .d.ts 会直接失败),按头部声明跳过
+  if (/\.d\.(ts|mts|cts)$/.test(file)) continue
   const text = readFileSync(file, 'utf8')
   const kind = ext === '.tsx' ? ts.ScriptKind.TSX : ext === '.ts' ? ts.ScriptKind.TS : ts.ScriptKind.JS
   const result = ts.transpileModule(text, {

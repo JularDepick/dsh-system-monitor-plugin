@@ -145,20 +145,19 @@ export function setup(ctx: Context, config: Config): void {
     (handle) => resolver.setReported(handle.pid, handle.sessionId),
   )
 
-  // 派生归属只在读不到进程环境的平台上启用:Linux 与 WSL 已由 /proc 环境信源覆盖,
-  // 故不为这些平台增加包装与原型挂钩
-  if (process.platform !== 'linux') {
-    ctx.effect(() => {
-      hookSubprocess(ctx, watcher)
-      const off = ctx.on('internal/service', (name) => {
-        if (name === 'subprocess') hookSubprocess(ctx, watcher)
-      })
-      return () => {
-        off()
-        unhookSubprocess()
-      }
+  // 派生归属在所有平台启用:Linux 上 /proc 环境信源只覆盖得到链尾进程,
+  // 宿主经 systemd 瞬态 scope 派生时直接子进程(以及无 systemd 时的内部 runner)环境里没有会话标识,
+  // 该中间层只有派生锚点认得出来,故这里不再按平台关闭
+  ctx.effect(() => {
+    hookSubprocess(ctx, watcher)
+    const off = ctx.on('internal/service', (name) => {
+      if (name === 'subprocess') hookSubprocess(ctx, watcher)
     })
-  }
+    return () => {
+      off()
+      unhookSubprocess()
+    }
+  })
 
   // 轮询采集:激活即执行首轮,卸载时自动清理;每轮先刷新宿主侧归属信息
   ctx.effect(() => {

@@ -1,15 +1,17 @@
 /*
- * 子进程派生的会话归属(读不到进程环境的平台的自动信源)
+ * 子进程派生的会话归属(所有平台通用的自动信源)
  *
  * 宿主每次模型 shell 调用都经 subprocess 服务派生进程,并在派生入参的环境里带上
- * 会话标识(`DSH_SESSION_ID`);Linux 与 WSL 能经 `/proc/<pid>/environ` 读回该变量,
- * Windows 与 macOS 读不到进程环境,故本模块补上这条信源:
+ * 会话标识(`DSH_SESSION_ID`);Windows 与 macOS 读不到进程环境,只能靠本模块补上这条信源,
+ * Linux 与 WSL 虽然能经 `/proc/<pid>/environ` 读回该变量,也同样启用(与那条信源互补,见下),故:
  *  1. 宿主 subprocess 服务派生入口的外层包装打开一个「派生窗口」,窗口内记下本次派生的会话;
  *  2. 窗口期间临时挂钩 `ChildProcess.prototype.spawn`,读回宿主本次真正创建的子进程标识,
  *     窗口退出即还原原型,宿主其它派生路径完全不受影响;
  *  3. 子进程自身环境里带会话标识时直接采信(不设中间 runner 的直接派生路径)。
- * Windows 上宿主经 Job runner 间接派生,锚点因此落在 runner 上,
- * 被派生的命令行进程按父子链覆盖(与终端子树归属同一套上溯规则)。
+ * 间接派生时锚点落在中间 runner 上,被派生的命令行进程按父子链覆盖(与终端子树归属同一套上溯规则):
+ * Windows 上是 Job runner,其环境已被实现侧剔除 `DSH_*`;Linux 上是 systemd 瞬态 scope 的 `systemd-run`,
+ * 它只拿到 runner 环境,会话标识要由 scope 内部的 runner 从启动文件再应用,
+ * 故 `/proc` 那条信源只覆盖得到链尾进程,这一层只能由锚点认出来。
  * 归属只用于面板分组,不改变采样口径,也不向 dsh 主体暴露。
  * 作者:JularDepick
  */

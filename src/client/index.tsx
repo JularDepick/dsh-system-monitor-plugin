@@ -1643,6 +1643,13 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const currentSessionProcesses = processes.filter(
     (sample) => sample.owner !== undefined && belongsToCurrentSession(sample.owner),
   )
+  /**
+   * 本轮是否存在「采到了却没解析出归属」的派生进程(排除宿主根进程:它按设计不参与归属)。
+   * 用于分辨本会话卡空态的两种成因:确实没有属于本会话的进程,还是归属链没有产出。
+   */
+  const attributionMissed = processes.some(
+    (sample) => sample.handle.pid !== snapshot.rootPid && sample.owner === undefined,
+  )
   const sampledCurrentSessionGroups = groupByProcess(
     currentSessionProcesses,
     snapshot.rootPid,
@@ -2142,7 +2149,13 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             </tr>
           )
         }}
-        emptyText={currentSessionId.length === 0 ? t('empty.noSessionScope') : t('empty.noCurrentProcesses')}
+        emptyText={
+          currentSessionId.length === 0
+            ? t('empty.noSessionScope')
+            : currentSessionGroups.length === 0 && attributionMissed
+              ? t('empty.noAttribution')
+              : t('empty.noCurrentProcesses')
+        }
         ariaLabel={t('currentProcess.title')}
         open={collapsed.current !== true}
         onToggle={() => toggleCard('current')}

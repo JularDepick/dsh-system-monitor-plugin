@@ -61,10 +61,18 @@ export const QUERY_TIMEOUT_MS = 10000
 
 /**
  * 会话标识环境变量名:宿主在每次模型 shell 调用时把它注入子进程环境(见宿主 shell-env 注册表)。
- * Linux 与 WSL 可经 `/proc/<pid>/environ` 读回;Windows 与 macOS 读不到进程环境,
- * 改经宿主 subprocess 派生入口的入参读回(见 monitor/spawn-tracking.ts)。
+ * Linux 与 WSL 可经 `/proc/<pid>/environ` 读回;Windows 与 macOS 读不到进程环境。
+ * 两条信源在所有平台同时启用(派生锚点见 monitor/spawn-tracking.ts):Linux 上锚点不是兜底而是必要补充,
+ * 宿主经 systemd 瞬态 scope 派生时直接子进程只拿到 runner 环境,会话标识要由内部 runner 从启动文件再应用。
  */
 export const SESSION_ENV_KEY = 'DSH_SESSION_ID'
+
+/**
+ * 子进程环境读取失败的重试上限(单位:采集轮次)。
+ * 读失败(权限不足,进程刚派生尚未 exec)不写归属缓存,连续失败达该轮数后才按无归属处理;
+ * 避免一次瞬时失败把进程长期钉成未归因(见 monitor/attribution.ts)。
+ */
+export const ENVIRON_RETRY_LIMIT = 5
 
 /**
  * Linux 时钟节拍兜底值(/proc 时间字段单位,标准 USER_HZ):
