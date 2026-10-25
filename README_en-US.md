@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.2.4-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.2.4)
+[![Version](https://img.shields.io/badge/Version-0.3.0-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.0)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -13,7 +13,7 @@
 
 A plugin for dsh: monitor the resource utilization of dsh system processes, and report the results to the user in the form of charts
 
-Supports dsh 0.2.0-rc.2, 0.2.1-rc.1 and 0.2.1-rc.2
+Supports dsh 0.2.1-rc.1, 0.2.1-rc.2 and 0.2.1-rc.3
 
 ---
 
@@ -31,7 +31,7 @@ Supports dsh 0.2.0-rc.2, 0.2.1-rc.1 and 0.2.1-rc.2
 
 ## Installation
 
-This release supports dsh 0.2.0-rc.2, 0.2.1-rc.1 and 0.2.1-rc.2: dsh enforces a plugin's dsh-prefixed `peerDependencies` since 0.2.0-rc.2, and since 0.2.1-rc.1 it decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored); this plugin declares the same supported set in both places, and any dsh version outside that set is refused at installation and at startup
+This release supports dsh 0.2.1-rc.1, 0.2.1-rc.2 and 0.2.1-rc.3: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and any dsh version outside that set (including 0.2.0-rc.2 and earlier) is refused at installation and at startup
 
 This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical
 
@@ -46,7 +46,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 When distributing a tarball:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.2.4.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.0.tgz
 ```
 
 

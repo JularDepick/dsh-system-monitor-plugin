@@ -11,8 +11,8 @@
 import { defineConfig } from 'tsdown'
 
 /** 宿主冻结的平台模块表(客户端 bundle 一律外部化,运行时由宿主提供);
- *  清单取 dsh 0.2.0-rc.2,0.2.1-rc.1 与 0.2.1-rc.2 发布包的公共子集,故三版通用
- *  (0.2.1-rc.1 另新增 zod 与 @tanstack/react-virtual,本插件不引入,不列入) */
+ *  清单取 dsh 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3 发布包的公共子集,故三版通用
+ *  (0.2.1-rc.1 起另新增 zod 与 @tanstack/react-virtual,本插件不引入,不列入) */
 const PLATFORM_EXTERNALS = [
   'react',
   'react/jsx-runtime',

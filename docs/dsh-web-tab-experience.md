@@ -2,7 +2,7 @@
 
 > 面向 dsh 插件开发者:总结外部插件为 dsh Web GUI 贡献 UI(尤其是新增 tab 页)的完整机制与落地要点
 > 以会话区域「对话/轨迹」视图标签栏新增 tab 为实例,同样适用于「设置-插件」页等其他挂载点
-> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对,已按 0.1.5-rc.1,0.1.7-rc.2 与 0.2.0-rc.2 发布包复核更新(平台模块表,槽 owner props,槽锚点与视图容器样式,客户端发现机制),并按 0.2.1-rc.1 与 0.2.1-rc.2 发布包复核平台模块表,槽契约与标准 props 来源(0.2.1-rc.2 与 0.2.1-rc.1 的相关包逐字节一致,视图容器样式未逐项复测);本经验为静态总结,换版本时以对应发布包类型声明为准
+> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对,已按 0.1.5-rc.1,0.1.7-rc.2 与 0.2.0-rc.2 发布包复核更新(平台模块表,槽 owner props,槽锚点与视图容器样式,客户端发现机制),并按 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3 发布包复核平台模块表,槽契约与标准 props 来源(0.2.1-rc.2 与 0.2.1-rc.1 的相关包逐字节一致,0.2.1-rc.3 的平台模块表与 0.2.1-rc.2 逐项一致,视图容器样式未逐项复测);本经验为静态总结,换版本时以对应发布包类型声明为准
 
 ## 一,总体流程(五个步骤)
 
@@ -68,7 +68,7 @@ ctx.slots.inject('conversation.view', () => ctx.slots.register({
 | define | `process.env.NODE_ENV` 与 `import.meta.env.MODE`(zustand 等内联库需要) |
 | CSS Modules | 自定义插件:lightningcss 编译 `.module.css` 为 hashed classMap + 注入 `<style data-plugin>`(tsdown 自带 css 管线不处理,需虚拟 id 包装,后缀不能是 `.css`) |
 
-平台模块表(宿主冻结模块表中的 seed 词,取发布包 `@deepseek-ai/dsh-web-frontend` 前端产物中的 `PLATFORM_MODULES` 表;下面按 0.2.1-rc.1 与 0.2.1-rc.2 列出(两版逐项一致),0.2.0-rc.2 及更早版本为同一表去掉 `zod` 与 `@tanstack/react-virtual` 两项):
+平台模块表(宿主冻结模块表中的 seed 词,取发布包 `@deepseek-ai/dsh-web-frontend` 前端产物中的 `PLATFORM_MODULES` 表;下面按 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3 列出(三版逐项一致),0.2.0-rc.2 及更早版本为同一表去掉 `zod` 与 `@tanstack/react-virtual` 两项):
 
 ```
 react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
@@ -77,7 +77,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 @deepseek-ai/dsh-client-ui-dockkit
 ```
 
-> 0.2.1-rc.1 相比 0.2.0-rc.2 新增 `zod` 与 `@tanstack/react-virtual`(0.2.1-rc.2 与 0.2.1-rc.1 该表一致);0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须是该表的子集(只列本插件真正 value-import 的包),多余外部化会在浏览器端解析失败,写成子集才能在 0.2.0-rc.2,0.2.1-rc.1 与 0.2.1-rc.2 上通用;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`)
+> 0.2.1-rc.1 相比 0.2.0-rc.2 新增 `zod` 与 `@tanstack/react-virtual`(0.2.1-rc.2 与 0.2.1-rc.3 该表均与 0.2.1-rc.1 一致);0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须是该表的子集(只列本插件真正 value-import 的包),多余外部化会在浏览器端解析失败,写成子集才能在 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3 上通用;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`)
 
 ### 2. 跨插件协作纪律(构建期 purity 门强制)
 
@@ -112,7 +112,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 
 1. **不需要新增 patch 行**:client 发现机制按 loader 条目(现有插件行)扫描,插件行同时是 host 插件与 client 条目;不要写成 `xxx/client` 子路径行
 2. **client.js 缺失 = web profile 启动失败**:激活期扫描发现 `exports["./client"]` 指向的文件不存在会聚合抛错;必须构建产出后再启动
-3. **官方仓库快照与发布包版本可能不同**:源码快照版本往往低于发布包(如快照 rc.5 vs 发布 0.1.1-rc.2);核对发布包类型与快照源码在所用 API 上的一致性或差异,换版本时务必以发布包类型为准;0.1.5-rc.1,0.1.7-rc.2 与 0.2.0-rc.2 一致的实测要点:`ctx.slots` 的 Context 类型合并由 `@deepseek-ai/dsh-client-ui-renderer/client` 提供(与槽位 SlotMap 合并的 `ui-conversation/client` 分开),客户端代码需同时 type-only import 两者;`dsh.client.inject` 填真实包名(官方 ui-trajectory/ui-jobs 同模式),它只参与客户端组合排序,不是 Cordis 服务注入
+3. **官方仓库快照与发布包版本可能不同**:源码快照版本往往低于发布包(如快照 rc.5 vs 发布 0.1.1-rc.2);核对发布包类型与快照源码在所用 API 上的一致性或差异,换版本时务必以发布包类型为准;0.1.5-rc.1 至 0.2.1-rc.3 一致的实测要点:`ctx.slots` 的 Context 类型合并由 `@deepseek-ai/dsh-client-ui-renderer/client` 提供(与槽位 SlotMap 合并的 `ui-conversation/client` 分开),客户端代码需同时 type-only import 两者;`dsh.client.inject` 填真实包名(官方 ui-trajectory/ui-jobs 同模式),它只参与客户端组合排序,不是 Cordis 服务注入
 4. **CSS Modules 需要 lightningcss**:tsdown 不内置该管线,官方用自定义插件(虚拟 id + lightningcss transform);不想要 CSS 文件时可用内联样式规避
 5. **样式纪律**:使用 `--dsw-alias-*` 语义 token,不写死颜色;产品文案用界面语言;表格/select 文本居中;不用浏览器原生弹窗
 6. **pnpm 无 TTY 会 abort**:package.json 描述符变更后需 `CI=true pnpm install`;typecheck/build 也建议 `CI=true` 前缀
@@ -125,7 +125,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 
 ## 五,参考文件索引(官方仓库)
 
-> 路径指向所示时期的仓库快照(本经验已按 dsh-v0.1.5-rc.1 复核 platform.ts 与 ui-trajectory 注册范例仍有效;0.1.7-rc.2 与 0.2.0-rc.2 按发布包前端产物与 `.d.ts` 类型声明复核平台模块表,槽契约,槽锚点与视图容器样式,0.2.1-rc.1 与 0.2.1-rc.2 复核平台模块表与槽契约);判断最新行为以官方仓库现况为准
+> 路径指向所示时期的仓库快照(本经验已按 dsh-v0.1.5-rc.1 复核 platform.ts 与 ui-trajectory 注册范例仍有效;0.1.7-rc.2 与 0.2.0-rc.2 按发布包前端产物与 `.d.ts` 类型声明复核平台模块表,槽契约,槽锚点与视图容器样式,0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3 复核平台模块表与槽契约);判断最新行为以官方仓库现况为准
 
 | 文件 | 用途 |
 |:---:|:---:|
