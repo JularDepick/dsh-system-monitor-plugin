@@ -46,7 +46,13 @@ export class MonitorPanel {
     const snapshot = this.collector.getSnapshot() ?? await this.collector.whenSampled(PANEL_FIRST_SAMPLE_WAIT_MS)
     // 请求可能已因客户端断开而结束,避免重复写入
     if (res.writableEnded) return
-    const payload = snapshot ?? {
+    /**
+     * 有旧快照但最近一轮失败时,把失败原因随旧数据一并下发:
+     * 面板保留旧数据继续展示,但据此改示徽章(否则查询持续失败时界面一直显示「正常」)。
+     */
+    const lastError = this.collector.getLastError()
+    const stale = lastError === null || snapshot === null ? snapshot : { ...snapshot, degraded: true, error: lastError }
+    const payload = stale ?? {
       sampledAt: 0,
       pollInterval: this.collector.pollInterval,
       cpuCount: 0,

@@ -162,8 +162,14 @@ export function setup(ctx: Context, config: Config): void {
   // 轮询采集:激活即执行首轮,卸载时自动清理;每轮先刷新宿主侧归属信息
   ctx.effect(() => {
     const tick = (): void => {
-      resolver.updateHostState(readSessionInfos(ctx), readTerminalOwners(ctx))
-      resolver.updateSpawnAnchors(watcher.takeAnchors())
+      // 宿主服务读取异常只影响该轮归属(沿用上一轮的会话与锚点), 不得中断轮询,
+      // 更不得把异常抛给 setInterval 的回调 —— 那会变成宿主的未捕获异常
+      try {
+        resolver.updateHostState(readSessionInfos(ctx), readTerminalOwners(ctx))
+        resolver.updateSpawnAnchors(watcher.takeAnchors())
+      } catch {
+        // 单轮归属信息不可用:保持上一轮结果继续采集
+      }
       void collector.poll()
     }
     const timer = setInterval(tick, collector.pollInterval)

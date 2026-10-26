@@ -219,14 +219,7 @@ export class OwnerResolver {
   }
 
   /**
-   * 锚点裁剪与实例绑定:
-   * 1. 首次采样到锚点进程时记下其实例令牌(没有令牌的平台退回纯 pid 记账);
-   * 2. 令牌与绑定值不一致说明该 pid 已被新进程复用,作废锚点与其后代归属;
-   * 3. 锚点进程本身退出后,只要仍有存活进程把它当作祖先,就保留锚点(否则后代归属会翻回未归因);
-   * 4. 既不在采样集合、也没有任何后代引用时才删除,保证映射不会无限增长。
-   */
-  /**
-   * 归属缓存与环境结论同样绑定实例令牌:pid 被复用时,上一进程解析出的会话(以及显式汇报的会话)
+   * 归属缓存与显式汇报同样绑定实例令牌:pid 被复用时,上一进程解析出的会话(以及汇报的会话)
    * 不得沿用到新进程上 —— 锚点已有这套校验,这两处原先只按 pid 记账。
    */
   private pruneInstances(alive: ReadonlySet<number>, instances: ReadonlyMap<number, string> | undefined): void {
@@ -248,6 +241,13 @@ export class OwnerResolver {
     for (const pid of [...this.cacheInstances.keys()]) if (!alive.has(pid)) this.cacheInstances.delete(pid)
   }
 
+  /**
+   * 锚点裁剪与实例绑定:
+   * 1. 首次采样到锚点进程时记下其实例令牌(没有令牌的平台退回纯 pid 记账);
+   * 2. 令牌与绑定值不一致说明该 pid 已被新进程复用,作废该锚点;
+   * 3. 锚点进程本身退出后,只要仍有存活进程把它当作祖先,就保留锚点(否则后代归属会翻回未归因);
+   * 4. 既不在采样集合、也没有任何后代引用时才删除,保证映射不会无限增长。
+   */
   private pruneAnchors(alive: ReadonlySet<number>, instances: ReadonlyMap<number, string> | undefined): void {
     for (const pid of this.spawnAnchors.keys()) {
       const token = instances?.get(pid)

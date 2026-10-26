@@ -1257,10 +1257,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         if (!response.ok) throw new Error(String(response.status))
         const data = (await response.json()) as MonitorSnapshot
         if (!alive) return
+        const failed = typeof data.error === 'string' && data.error.length > 0
         if (data.sampledAt > 0) {
+          // 带着失败原因的旧快照:保留数据但改示徽章,不能清成「正常」
           setSnapshot(data)
-          setUnavailable(false)
-        } else if (typeof data.error === 'string' && data.error.length > 0) {
+          setUnavailable(failed)
+        } else if (failed) {
           // 采集失败:有旧快照时保留旧快照并标记不可用,无旧快照时显示不可用提示
           setUnavailable(true)
         }
