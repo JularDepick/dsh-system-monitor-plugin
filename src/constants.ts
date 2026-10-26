@@ -271,9 +271,6 @@ export const PANEL_TEXT_TERTIARY_COLOR = 'var(--sm-text-tertiary)'
 /** 强调色(面板强调元素与图例中的 dsh 侧示意) */
 export const PANEL_ACCENT_COLOR = 'var(--sm-accent)'
 
-/** 交互态叠加底色:悬停(半透明,压在各自底色上,故明暗两套都成立) */
-export const PANEL_HOVER_COLOR = 'var(--sm-hover)'
-
 /** 交互态叠加底色:按下 */
 export const PANEL_ACTIVE_COLOR = 'var(--sm-active)'
 

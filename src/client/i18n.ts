@@ -106,10 +106,11 @@ export const zhDictionary = {
   'empty.noCurrentProcesses': '当前会话暂无被监控进程',
   'empty.noAttribution': '本轮未解析到会话归属,本卡无法归集进程',
   'empty.noSessionScope': '未能取得当前会话标识,本卡无法归集进程',
+  'loading.sampling': '正在采样…',
   'empty.noSessions': '目前没有任何会话进程',
   'error.unavailable': '监控数据源不可用,将自动重试',
-  'aria.usage.cpu': '{name} CPU 占用率',
-  'aria.usage.memory': '{name} 内存占用率',
+  'aria.usage.cpu': '{name} CPU 占用率 {value}',
+  'aria.usage.memory': '{name} 内存占用率 {value}',
 } satisfies Record<string, string>
 
 /** 英文文案(与 en-US.ini 同步) */
@@ -206,10 +207,11 @@ export const enDictionary = {
   'empty.noCurrentProcesses': 'No monitored processes in this session',
   'empty.noAttribution': 'No session attribution resolved this round; cannot group processes',
   'empty.noSessionScope': 'Current session identity unavailable; cannot attribute processes',
+  'loading.sampling': 'Sampling…',
   'empty.noSessions': 'No session processes yet',
   'error.unavailable': 'Monitoring source unavailable, retrying',
-  'aria.usage.cpu': 'CPU usage of {name}',
-  'aria.usage.memory': 'Memory usage of {name}',
+  'aria.usage.cpu': 'CPU usage of {name} {value}',
+  'aria.usage.memory': 'Memory usage of {name} {value}',
 } satisfies Record<keyof typeof zhDictionary, string>
 
 /** 面板文案键(取自中文基准字典) */

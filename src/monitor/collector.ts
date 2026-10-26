@@ -625,10 +625,12 @@ export class ProcessCollector {
 
     // 归属解析按本轮采样集合进行(进程树 + 汇报句柄);父子关系一并给出,供终端子树归属上溯
     const parents = new Map<number, number | null>(records.map((record) => [record.pid, record.parentPid]))
-    // 实例令牌交给归属解析器:pid 复用后令牌不同,据此作废对应派生锚点
+    // 实例令牌交给归属解析器:pid 复用后令牌不同,据此作废对应派生锚点。
+    // 平台没有原生令牌时(ps 链平台)退回采集器缓存的推算令牌,否则这些平台上的锚点校验一直空转
     const instances = new Map<number, string>()
     for (const record of records) {
-      if (record.instanceToken !== undefined) instances.set(record.pid, record.instanceToken)
+      const token = record.instanceToken ?? this.instanceTokens.get(record.pid)?.token
+      if (token !== undefined) instances.set(record.pid, token)
     }
     const owners = this.resolveOwners(order, parents, instances)
     const memoryPercentOf = (bytes: number): number =>

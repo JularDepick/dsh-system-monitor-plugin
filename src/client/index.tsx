@@ -43,7 +43,6 @@ import {
   PANEL_CHART_LABEL_WIDTH,
   PANEL_COLUMN_GUTTER,
   PANEL_HIGH_LOAD_THRESHOLD,
-  PANEL_HOVER_COLOR,
   LANE_COLOR_IDLE,
   PANEL_LOCALE_NAMESPACE,
   PANEL_MAX_WIDTH,
@@ -464,7 +463,7 @@ const panelCss = `
   --sm-surface: #eef4fd; --sm-card: #ffffff; --sm-card-head: #e4eefc; --sm-track: #cfdff5;
   --sm-border: #cdddf2; --sm-border-strong: #a9c3e6;
   --sm-text-primary: #12233d; --sm-text-secondary: #45597a; --sm-text-tertiary: #6f83a3;
-  --sm-accent: #2470d8; --sm-hover: #2470d814; --sm-active: #2470d824;
+  --sm-accent: #2470d8; --sm-active: #2470d824;
   --sm-ok: #16a34a; --sm-warn: #c2740c; --sm-warn-surface: #fff5e3; --sm-error: #d92d20;
   --sm-idle: #dce8f9; --sm-empty: #12233d2e;
 }
@@ -472,11 +471,10 @@ body[data-ds-dark-theme] .sm-root {
   --sm-surface: #0d1524; --sm-card: #16223a; --sm-card-head: #2a3a58; --sm-track: #3d5178;
   --sm-border: #33456a; --sm-border-strong: #5a7099;
   --sm-text-primary: #e9effb; --sm-text-secondary: #b5c3dc; --sm-text-tertiary: #8595b1;
-  --sm-accent: #5b9bff; --sm-hover: #5b9bff1f; --sm-active: #5b9bff33;
+  --sm-accent: #5b9bff; --sm-active: #5b9bff33;
   --sm-ok: #3ecf72; --sm-warn: #e0a63c; --sm-warn-surface: #2a2314; --sm-error: #ff6b6b;
   --sm-idle: #2a3a58; --sm-empty: #e9effb2e;
 }
-/* 骨架屏只保留占位高度,不铺底色:加载期不出现任何填充块或闪烁动画 */
 /* 维度卡容器:可用宽度容得下两列时并排,否则纵向堆叠(纯 CSS 栅格,无需测量宽度) */
 .sm-cards { display: grid; gap: ${PANEL_STACK_GAP}px; align-items: start; }
 /* 维度卡头部:浅灰底把标题行与卡片正文分开;整行可点折叠,悬停在同一底色上叠一层交互底色 */
@@ -917,8 +915,9 @@ function ShareTrack(props: {
           {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO), PANEL_TEXT_TERTIARY_COLOR)}
         </div>
       </div>
-      {/* 段标签行:与三段同构,取第一个放得下的候选文字(内存行会给「数值 · 百分比」) */}
-      <div style={{ display: 'flex', width: '100%', height: 18 }}>
+      {/* 段标签行:与三段同构,取第一个放得下的候选文字(内存行会给「数值 · 百分比」);
+          对读屏隐藏 —— 数值已并入上方占比条的 aria-label,重复播报同一批数字没有意义 */}
+      <div aria-hidden="true" style={{ display: 'flex', width: '100%', height: 18 }}>
         <div style={{ flex: othersFlex, ...shareLabelStyle }}>
           {fitText(othersCandidates, laneWidth(PANEL_SHARE_OTHERS_RATIO))}
         </div>
@@ -1608,9 +1607,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       <div className="sm-root sm-column" style={columnStyle}>
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{settingsAnchor}</div>
         {configOpen ? configCard : null}
-        {[0, 1].map((index) => (
-          <div key={index} className="sm-skeleton" style={{ height: 56, borderRadius: 12 }} />
-        ))}
+        <span role="status" aria-live="polite" style={{ color: PANEL_TEXT_TERTIARY_COLOR, ...PANEL_TYPOGRAPHY.base }}>
+          {t('loading.sampling')}
+        </span>
         <style>{panelCss}</style>
       </div>
     )
@@ -1689,8 +1688,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     cpuFactor,
     t('session.subagent'),
   )
-  /** 本会话派生的子代理进程(卡头的「其中子代理」合计只在这些进程存在时给出) */
-  const hasCurrentSessionSubagent = currentSessionProcesses.some((sample) => sample.owner?.subagent === true)
+  /** 本会话派生的子代理进程(仅用于本会话口径的判定,卡头合计见下方按留存行计算) */
+
 
   /**
    * 表格排序:在留存之前对「本轮采样到的行」排序(未采样行按留存顺序附在其后),
@@ -1776,7 +1775,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const currentSessionSubagentRows = currentSessionGroups.filter(
     (group) => group.subagent === true && group.key !== HOST_GROUP_KEY,
   )
-  const currentSessionSubagentMeta = currentSessionSubagentRows.length === 0 || !hasCurrentSessionSubagent
+  const currentSessionSubagentMeta = currentSessionSubagentRows.length === 0
     ? undefined
     : [
       t('currentProcess.subagentCount', { count: currentSessionSubagentRows.length }),
@@ -2191,9 +2190,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
               {nameCell(group, currentSessionColors[index], label, sampled)}
               {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
               {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label })) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('current', group, label)}
             </tr>
           )
@@ -2239,9 +2238,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
                   <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionLabel}</span>
                 </td>
               ) : null}
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: group.label }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: group.label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: group.label })) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: group.label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('process', group, group.label)}
             </tr>
           )
@@ -2269,9 +2268,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, sessionColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label })) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('conversation', group, label)}
             </tr>
           )
@@ -2300,9 +2299,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, subagentColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label })) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('subagent', group, label)}
             </tr>
           )

@@ -15,7 +15,7 @@ README.md:50
 README_en-US.md:5
 README_en-US.md:50
 AGENTS.md:435
-src/constants.ts:PLUGIN_VERSION
+src/constants.ts:16
 docs/repo-spec/tag-release-spec.md:17
 docs/v1.0.0-前驱版本待办排期清单.md:3
 src/translation/.example_zh-CN.ini:2
