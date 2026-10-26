@@ -150,6 +150,8 @@ export class OwnerResolver {
   private parents: ReadonlyMap<number, number | null> = new Map()
   /** 环境读取失败计数(pid → 连续失败轮数;达上限才按无归属处理并随 pid 消失裁剪) */
   private readonly environFailures = new Map<number, number>()
+  /** 锚点绑定的进程实例令牌(pid → 并入锚点后首次采样到的令牌;令牌变化说明 pid 已被复用) */
+  private readonly anchorInstances = new Map<number, string>()
 
   /** 构造解析器 */
   constructor(
@@ -173,7 +175,11 @@ export class OwnerResolver {
    * 故同一次派生窗口只需上报一次。
    */
   updateSpawnAnchors(anchors: ReadonlyMap<number, string>): void {
-    for (const [pid, sessionId] of anchors) this.spawnAnchors.set(pid, sessionId)
+    for (const [pid, sessionId] of anchors) {
+      this.spawnAnchors.set(pid, sessionId)
+      // 新锚点对应一次新的派生,旧的实例绑定不能沿用
+      this.anchorInstances.delete(pid)
+    }
   }
 
   /** 记录 Agent 汇报句柄的会话归属(显式标注优先于环境推断) */
@@ -182,21 +188,67 @@ export class OwnerResolver {
     else this.reported.set(pid, sessionId)
   }
 
-  /** 解析一批进程的归属(仅返回有归属的项) */
-  resolve(pids: readonly number[], parents?: ReadonlyMap<number, number | null>): Map<number, ProcessOwner> {
+  /**
+   * 解析一批进程的归属(仅返回有归属的项)。
+   * `instances` 给出本轮各进程的实例令牌(平台能给出时),用于两件事:
+   * 一是发现 pid 被复用后作废对应锚点,避免新进程继承上一进程的会话;
+   * 二是锚点进程自身退出后,只要其后代仍被采样到就继续保留该锚点(否则后代会在下一轮翻回未归因)。
+   */
+  resolve(
+    pids: readonly number[],
+    parents?: ReadonlyMap<number, number | null>,
+    instances?: ReadonlyMap<number, string>,
+  ): Map<number, ProcessOwner> {
     this.parents = parents ?? new Map()
     const owners = new Map<number, ProcessOwner>()
     for (const pid of pids) {
       const owner = this.resolveOne(pid)
       if (owner !== undefined) owners.set(pid, owner)
     }
-    // 裁剪:只保留当前存在的 pid,规避 pid 复用带来的错误归属
     const alive = new Set(pids)
+    // 裁剪:只保留当前存在的 pid,规避 pid 复用带来的错误归属
     for (const pid of [...this.cached.keys()]) if (!alive.has(pid)) this.cached.delete(pid)
     for (const pid of [...this.reported.keys()]) if (!alive.has(pid)) this.reported.delete(pid)
-    for (const pid of [...this.spawnAnchors.keys()]) if (!alive.has(pid)) this.spawnAnchors.delete(pid)
     for (const pid of [...this.environFailures.keys()]) if (!alive.has(pid)) this.environFailures.delete(pid)
+    this.pruneAnchors(alive, instances)
     return owners
+  }
+
+  /**
+   * 锚点裁剪与实例绑定:
+   * 1. 首次采样到锚点进程时记下其实例令牌(没有令牌的平台退回纯 pid 记账);
+   * 2. 令牌与绑定值不一致说明该 pid 已被新进程复用,作废锚点与其后代归属;
+   * 3. 锚点进程本身退出后,只要仍有存活进程把它当作祖先,就保留锚点(否则后代归属会翻回未归因);
+   * 4. 既不在采样集合、也没有任何后代引用时才删除,保证映射不会无限增长。
+   */
+  private pruneAnchors(alive: ReadonlySet<number>, instances: ReadonlyMap<number, string> | undefined): void {
+    for (const pid of this.spawnAnchors.keys()) {
+      const token = instances?.get(pid)
+      if (token === undefined) continue
+      const bound = this.anchorInstances.get(pid)
+      if (bound === undefined) this.anchorInstances.set(pid, token)
+      else if (bound !== token) {
+        this.spawnAnchors.delete(pid)
+        this.anchorInstances.delete(pid)
+      }
+    }
+    const referenced = new Set<number>()
+    for (const pid of alive) {
+      let current = this.parents.get(pid)
+      for (let depth = 0; depth < SESSION_SUBTREE_MAX_DEPTH; depth += 1) {
+        if (current === undefined || current === null) break
+        if (this.spawnAnchors.has(current)) {
+          referenced.add(current)
+          break
+        }
+        current = this.parents.get(current)
+      }
+    }
+    for (const pid of [...this.spawnAnchors.keys()]) {
+      if (alive.has(pid) || referenced.has(pid)) continue
+      this.spawnAnchors.delete(pid)
+      this.anchorInstances.delete(pid)
+    }
   }
 
   /** 解析单个进程的归属 */

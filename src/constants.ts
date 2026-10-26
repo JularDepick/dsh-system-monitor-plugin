@@ -75,6 +75,14 @@ export const SESSION_ENV_KEY = 'DSH_SESSION_ID'
 export const ENVIRON_RETRY_LIMIT = 5
 
 /**
+ * 推算型启动时刻的缓存容差(毫秒)。
+ * macOS 与其余类 Unix 平台只能由 ps 的已运行时长反推启动时刻,该值逐轮抖动,
+ * 故采集器把首轮观测值缓存成实例令牌;后续轮次与缓存值偏差超过该容差时,
+ * 视为 pid 已被新进程复用并刷新令牌(见 monitor/collector.ts 的 baselineKeyOf)。
+ */
+export const INSTANCE_TOKEN_TOLERANCE_MS = 5000
+
+/**
  * Linux 时钟节拍兜底值(/proc 时间字段单位,标准 USER_HZ):
  * 首次运行时会探测真实值并缓存(见 monitor/clock-ticks.ts),
  * 探测不可信或非 Linux 平台时用该值。

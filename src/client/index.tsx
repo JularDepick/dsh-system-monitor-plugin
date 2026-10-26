@@ -109,7 +109,7 @@ import { normalizeTableSort, sortRows } from '../monitor/table-sort'
 import { layoutColumnWidths } from '../monitor/table-layout'
 import type { TableSort } from '../monitor/table-sort'
 import { RowRetention } from '../monitor/retention'
-import { normalizeLaneColorPool, normalizeLaneColorStrategy, planLaneColors, mixLaneColors } from '../monitor/lane-colors'
+import { normalizeLaneColor, normalizeLaneColorPool, normalizeLaneColorStrategy, planLaneColors, mixLaneColors } from '../monitor/lane-colors'
 import type { LaneColorStrategy } from '../monitor/lane-colors'
 import type { RetainedRow } from '../monitor/retention'
 import type { MonitorSnapshot, ProcessOwner, ResourceSample } from '../monitor/types'
@@ -1184,6 +1184,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 故编辑期只记草稿,失焦或回车时才收敛并提交。
    */
   const [retainDraft, setRetainDraft] = useState<string | null>(null)
+  /**
+   * 色池颜色输入框的草稿值(仅在编辑中非空):
+   * 直接受控于已提交值会让逐字符输入经过 1 至 2 位中间态,归一化会把该条判为非法并删掉,
+   * 故编辑期只记草稿,失焦或回车时才归一化并提交。
+   */
+  const [laneColorDraft, setLaneColorDraft] = useState<{ index: number; value: string } | null>(null)
   /** 取间色新增后的待落盘色池(渲染期登记,快照更新后的副作用里提交) */
   const lanePoolPendingRef = useRef<{ pool: string[]; cursor: number } | null>(null)
   useEffect(() => {
@@ -1327,6 +1333,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     const parsed = Number.parseInt(raw, 10)
     setPreference('retainRounds', Number.isFinite(parsed) ? normalizeRetainRounds(parsed) ?? retainRounds : retainRounds)
     setRetainDraft(null)
+  }
+
+  /** 提交颜色输入框:合法则归一化落盘,非法输入不改动原色,提交后清空草稿 */
+  const commitLaneColor = (index: number, raw: string): void => {
+    if (normalizeLaneColor(raw) !== undefined) updateLaneColor(index, raw)
+    setLaneColorDraft(null)
   }
 
   /** 改写池内某个颜色:归一化后再落盘,非法输入回退为原池 */
@@ -1525,11 +1537,15 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
                     style={{ width: PANEL_SWATCH_SIZE * 1.4, height: PANEL_SWATCH_SIZE * 1.4, borderRadius: 3, background: color, border: `1px solid ${PANEL_BORDER_COLOR}`, boxSizing: 'border-box' }}
                   />
                   <Input
-                    value={color}
+                    value={laneColorDraft !== null && laneColorDraft.index === index ? laneColorDraft.value : color}
                     aria-label={t('config.laneColorValue', { index: index + 1 })}
                     title={t('config.laneColorValueHint')}
                     style={{ width: 92 }}
-                    onChange={(event) => updateLaneColor(index, event.target.value)}
+                    onChange={(event) => setLaneColorDraft({ index, value: event.target.value })}
+                    onBlur={(event) => commitLaneColor(index, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') commitLaneColor(index, (event.target as HTMLInputElement).value)
+                    }}
                   />
                   <Button
                     variant="ghost"
@@ -1575,6 +1591,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     return (
       <div className="sm-root sm-column" style={columnStyle}>
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{settingsAnchor}</div>
+        {configOpen ? configCard : null}
         {[0, 1].map((index) => (
           <div key={index} className="sm-skeleton" style={{ height: 56, borderRadius: 12 }} />
         ))}

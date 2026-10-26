@@ -33,7 +33,8 @@
     "COPYRIGHT"
   ],
   "scripts": {
-    "build": "node scripts/clean-release.cjs && tsdown",
+    "build": "tsdown",
+    "prepack": "node scripts/clean-release.cjs",
     "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit",
     "prepare": "pnpm build",

@@ -77,6 +77,12 @@ export interface ProcessRecord {
    * 用于把 CPU 差分基准绑定到具体进程实例,规避 pid 复用把上一进程的累计 CPU 时间当成新进程基准。
    */
   startTimeMs?: number
+  /**
+   * 进程实例令牌(平台给出的稳定标识:Linux 取 `stat` 的启动节拍数, Windows 取创建时刻原文)。
+   * 与 startTimeMs 的分工: 该值必须是平台权威且逐轮不变的量, 不能由本地时间推算 ——
+   * 推算值逐轮抖动会让 CPU 差分基准失配, CPU 因此恒为 0。
+   */
+  instanceToken?: string
 }
 
 /**

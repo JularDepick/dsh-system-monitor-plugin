@@ -141,7 +141,7 @@ export function setup(ctx: Context, config: Config): void {
     config.pollInterval,
     process.pid,
     createPlatformQuery(),
-    (pids, parents) => resolver.resolve(pids, parents),
+    (pids, parents, instances) => resolver.resolve(pids, parents, instances),
     (handle) => resolver.setReported(handle.pid, handle.sessionId),
   )
 

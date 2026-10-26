@@ -14,7 +14,7 @@ import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { cpus, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
+import { INSTANCE_TOKEN_TOLERANCE_MS, LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
 
 import { readCgroupLimits } from './cgroup'
@@ -54,11 +54,16 @@ function dropSampler(records: ProcessRecord[], samplerPid: number | undefined): 
 }
 
 /**
- * CPU 差分基准键:平台给出启动时刻时把基准绑定到该进程实例(pid 加启动时刻),
- * 否则退回仅按 pid。系统回收 pid 后会分配给新进程,仅按 pid 记账会把上一进程的
- * 累计 CPU 时间当成新进程的基准,从而出现负差被截零或首个窗口的虚假占用。
+ * CPU 差分基准键:把基准绑定到该进程实例(pid 加实例令牌),否则退回仅按 pid。
+ * 系统回收 pid 后会分配给新进程,仅按 pid 记账会把上一进程的累计 CPU 时间
+ * 当成新进程的基准,从而出现负差被截零或首个窗口的虚假占用。
+ *
+ * 键里的令牌取平台的 `instanceToken`(Linux 启动节拍数, Windows 创建时刻原文),
+ * 必须是逐轮不变的量;没有该字段时退回 `startTimeMs`,而采集器会为这类平台
+ * (macOS 与其余类 Unix)另存首轮观测值,避免推算值抖动让基准每轮失配。
  */
 export function baselineKey(record: ProcessRecord): string {
+  if (record.instanceToken !== undefined) return `${record.pid}@${record.instanceToken}`
   return record.startTimeMs === undefined ? String(record.pid) : `${record.pid}@${record.startTimeMs}`
 }
 
@@ -98,7 +103,9 @@ export function parseRecords(text: string): ProcessRecord[] {
         workingSetBytes: typeof item.WorkingSetSize === 'number' && item.WorkingSetSize > 0 ? item.WorkingSetSize : 0,
       }
       const startTimeMs = parseCimDate(item.CreationDate)
-      return startTimeMs === undefined ? record : { ...record, startTimeMs }
+      if (startTimeMs === undefined) return record
+      const rawCreation = typeof item.CreationDate === 'string' ? item.CreationDate : String(startTimeMs)
+      return { ...record, startTimeMs, instanceToken: rawCreation }
     })
 }
 
@@ -260,8 +267,10 @@ export class LinuxProcQuery implements ProcessQuery {
       cpuSeconds: ((Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0)) / this.clkTck,
       workingSetBytes: rssMatch ? Number(rssMatch[1]) * 1024 : 0,
     }
-    if (bootTimeMs === undefined || !Number.isFinite(startTicks) || startTicks < 0) return record
-    return { ...record, startTimeMs: bootTimeMs + (startTicks / this.clkTck) * 1000 }
+    if (!Number.isFinite(startTicks) || startTicks < 0) return record
+    const withToken: ProcessRecord = { ...record, instanceToken: String(startTicks) }
+    if (bootTimeMs === undefined) return withToken
+    return { ...withToken, startTimeMs: bootTimeMs + (startTicks / this.clkTck) * 1000 }
   }
 }
 
@@ -482,6 +491,12 @@ export class ProcessCollector {
   private readonly reported = new Map<number, ProcessHandle>()
   /** 各进程实例的上一轮累计 CPU 时间(键见 `baselineKey`,秒) */
   private readonly lastCpu = new Map<string, number>()
+  /**
+   * 平台只给出可推算启动时刻时, 首轮观测值固定下来的实例令牌(pid → 令牌)。
+   * macOS 与其余类 Unix 平台的 ps 只给已运行时长, 反推的启动时刻逐轮抖动,
+   * 不能直接进差分键, 否则 CPU 恒为 0。
+   */
+  private readonly instanceTokens = new Map<number, { token: string; baseMs: number }>()
   /** 最近一次采样时刻(epoch 毫秒) */
   private lastSampledAt = 0
   /** 是否有采集轮询在执行中(查询慢于轮询间隔时跳过本轮,不并发重入) */
@@ -509,6 +524,7 @@ export class ProcessCollector {
     private readonly resolveOwners: (
       pids: readonly number[],
       parents: ReadonlyMap<number, number | null>,
+      instances: ReadonlyMap<number, string>,
     ) => Map<number, ProcessOwner> = () => new Map(),
     /** 汇报句柄归属同步:句柄并入监控集合时把其会话标注告知归属解析器 */
     private readonly onReported: (handle: ProcessHandle) => void = () => {},
@@ -530,6 +546,23 @@ export class ProcessCollector {
     } finally {
       this.polling = false
     }
+  }
+
+  /**
+   * 取一条记录的差分基准键:平台给出的实例令牌优先;
+   * 平台只给可推算启动时刻时,把首次观测到的该值缓存下来当令牌用,避免逐轮抖动让基准失配。
+   */
+  private baselineKeyOf(record: ProcessRecord): string {
+    if (record.instanceToken !== undefined) return baselineKey(record)
+    if (record.startTimeMs === undefined) return String(record.pid)
+    const cached = this.instanceTokens.get(record.pid)
+    // 缓存值只在该进程的推算启动时刻仍与之吻合时沿用:偏差超过容差即视为 pid 被复用并换新令牌
+    if (cached !== undefined && Math.abs(cached.baseMs - record.startTimeMs) <= INSTANCE_TOKEN_TOLERANCE_MS) {
+      return `${record.pid}@${cached.token}`
+    }
+    const token = String(record.startTimeMs)
+    this.instanceTokens.set(record.pid, { token, baseMs: record.startTimeMs })
+    return `${record.pid}@${token}`
   }
 
   /** 以原始记录推进一轮采样(纯逻辑,便于测试) */
@@ -573,7 +606,7 @@ export class ProcessCollector {
     const cpuPercentByPid = new Map<number, number>()
     const aliveKeys = new Set<string>()
     for (const record of records) {
-      const key = baselineKey(record)
+      const key = this.baselineKeyOf(record)
       aliveKeys.add(key)
       const previous = this.lastCpu.get(key)
       const cpuPercent = previous !== undefined && elapsed > 0 && record.cpuSeconds >= previous
@@ -586,10 +619,18 @@ export class ProcessCollector {
     for (const key of [...this.lastCpu.keys()]) {
       if (!aliveKeys.has(key)) this.lastCpu.delete(key)
     }
+    for (const pid of [...this.instanceTokens.keys()]) {
+      if (!byPid.has(pid)) this.instanceTokens.delete(pid)
+    }
 
     // 归属解析按本轮采样集合进行(进程树 + 汇报句柄);父子关系一并给出,供终端子树归属上溯
     const parents = new Map<number, number | null>(records.map((record) => [record.pid, record.parentPid]))
-    const owners = this.resolveOwners(order, parents)
+    // 实例令牌交给归属解析器:pid 复用后令牌不同,据此作废对应派生锚点
+    const instances = new Map<number, string>()
+    for (const record of records) {
+      if (record.instanceToken !== undefined) instances.set(record.pid, record.instanceToken)
+    }
+    const owners = this.resolveOwners(order, parents, instances)
     const memoryPercentOf = (bytes: number): number =>
       this.memoryDenominator > 0 ? (bytes / this.memoryDenominator) * 100 : 0
     const processes: ResourceSample[] = order.map((pid) => {

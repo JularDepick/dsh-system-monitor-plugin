@@ -51,7 +51,7 @@ export const Config: Schema<Config> = Schema.object({
   laneNames: Schema.boolean().default(DEFAULT_LANE_NAMES),
   columns: Schema.union([1, 2]).default(DEFAULT_PANEL_COLUMNS),
   cpuScope: Schema.union(['machine', 'core']).default(DEFAULT_CPU_SCOPE),
-  retainRounds: Schema.number().min(MIN_RETAIN_ROUNDS).max(MAX_RETAIN_ROUNDS).default(DEFAULT_RETAIN_ROUNDS),
+  retainRounds: Schema.number().min(MIN_RETAIN_ROUNDS).max(MAX_RETAIN_ROUNDS).step(1).default(DEFAULT_RETAIN_ROUNDS),
   laneColorPool: Schema.array(Schema.string()).default([...DEFAULT_LANE_COLOR_POOL]),
   laneColorStrategy: Schema.union(['cycle', 'midpoint']).default(DEFAULT_LANE_COLOR_STRATEGY),
 })

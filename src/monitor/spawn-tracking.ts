@@ -78,8 +78,8 @@ export class ChildSpawnWatcher {
    */
   during<T>(sessionId: string | undefined, body: () => T): T {
     this.windows.push(sessionId)
-    if (this.hooked === null) this.hook()
     try {
+      if (this.hooked === null) this.hook()
       return body()
     } finally {
       this.windows.pop()
@@ -114,7 +114,12 @@ export class ChildSpawnWatcher {
       }
       return result
     }
-    host.spawn = hooked
+    try {
+      host.spawn = hooked
+    } catch {
+      // 原型被其它插件冻结或改成只读:退化为不记录锚点,不把异常抛给宿主派生调用
+      return
+    }
     this.original = original
     this.hooked = hooked
   }
