@@ -9,6 +9,12 @@
 /** 插件包名 */
 export const PLUGIN_NAME = 'dsh-system-monitor-plugin'
 
+/**
+ * 插件版本号(面板页脚展示)。
+ * 必须与 package.json 的 version 同步,迭代版本号时一并更新(见 version.index.md)。
+ */
+export const PLUGIN_VERSION = '0.3.0'
+
 /** 默认语言(翻译回退与初始语言) */
 export const DEFAULT_LANGUAGE = 'zh-CN'
 

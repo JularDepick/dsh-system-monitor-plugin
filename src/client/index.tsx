@@ -100,6 +100,7 @@ import {
   PANEL_TOP_PADDING,
   PANEL_TYPOGRAPHY,
   PLUGIN_NAME,
+  PLUGIN_VERSION,
 } from '../constants'
 import type { CpuScope, PanelColumns, PanelTableColumn } from '../constants'
 import { panelDictionaries } from './i18n'
@@ -475,9 +476,7 @@ body[data-ds-dark-theme] .sm-root {
   --sm-ok: #3ecf72; --sm-warn: #e0a63c; --sm-warn-surface: #2a2314; --sm-error: #ff6b6b;
   --sm-idle: #2a3a58; --sm-empty: #e9effb2e;
 }
-.sm-skeleton { background: linear-gradient(90deg, ${PANEL_HOVER_COLOR} 25%, ${PANEL_BORDER_COLOR} 50%, ${PANEL_HOVER_COLOR} 75%); background-size: 400% 100%; animation: sm-shimmer 1.4s ease-in-out infinite; }
-@keyframes sm-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
-@media (prefers-reduced-motion: reduce) { .sm-skeleton { animation: none; } }
+/* 骨架屏只保留占位高度,不铺底色:加载期不出现任何填充块或闪烁动画 */
 /* 维度卡容器:可用宽度容得下两列时并排,否则纵向堆叠(纯 CSS 栅格,无需测量宽度) */
 .sm-cards { display: grid; gap: ${PANEL_STACK_GAP}px; align-items: start; }
 /* 维度卡头部:浅灰底把标题行与卡片正文分开;整行可点折叠,悬停在同一底色上叠一层交互底色 */
@@ -2313,7 +2312,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       {/* 页脚:项目与作者链接 */}
       <div style={{ color: PANEL_TEXT_TERTIARY_COLOR, textAlign: 'center', ...PANEL_TYPOGRAPHY.caption }}>
         <a href={PANEL_PROJECT_URL} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
-          {PLUGIN_NAME}
+          {PLUGIN_NAME}-v{PLUGIN_VERSION}
         </a>
         {' · '}
         <a href={PANEL_AUTHOR_URL} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
