@@ -48,9 +48,31 @@ function runPowershell(script: string): Promise<{ text: string; pid: number | un
   })
 }
 
-/** 剔除查询进程自身的记录:它是本次采集派生的工具进程,不属于被监控对象 */
+/**
+ * 剔除查询进程自身及其后代:查询进程是本次采集派生的工具进程, 不属于被监控对象;
+ * 它的后代(Windows 上 PowerShell 起的 conhost 之类)同样是采集开销,
+ * 留在枚举结果里会被计进「其他应用」的 CPU 与内存。
+ */
 function dropSampler(records: ProcessRecord[], samplerPid: number | undefined): ProcessRecord[] {
-  return samplerPid === undefined ? records : records.filter((record) => record.pid !== samplerPid)
+  if (samplerPid === undefined) return records
+  const children = new Map<number, number[]>()
+  for (const record of records) {
+    if (record.parentPid === null) continue
+    const list = children.get(record.parentPid)
+    if (list === undefined) children.set(record.parentPid, [record.pid])
+    else list.push(record.pid)
+  }
+  const dropped = new Set<number>([samplerPid])
+  const queue: number[] = [samplerPid]
+  while (queue.length > 0) {
+    const pid = queue.pop() as number
+    for (const child of children.get(pid) ?? []) {
+      if (dropped.has(child)) continue
+      dropped.add(child)
+      queue.push(child)
+    }
+  }
+  return records.filter((record) => !dropped.has(record.pid))
 }
 
 /**
@@ -93,7 +115,9 @@ export function parseRecords(text: string): ProcessRecord[] {
   const list = Array.isArray(data) ? data : [data]
   return list
     .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
-    .filter((item) => Number.isInteger(item.ProcessId))
+    // pid 0 是 System Idle Process, 其累计 CPU 时间就是整机空闲时间:
+    // 计入「其他应用」会让空闲恒为 0、其他应用恒等于整机占用, 故与 ps 链一致按 pid 大于 0 过滤
+    .filter((item) => Number.isInteger(item.ProcessId) && (item.ProcessId as number) > 0)
     .map((item) => {
       const record: ProcessRecord = {
         pid: item.ProcessId as number,

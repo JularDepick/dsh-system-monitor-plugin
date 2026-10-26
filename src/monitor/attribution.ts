@@ -152,6 +152,8 @@ export class OwnerResolver {
   private readonly environFailures = new Map<number, number>()
   /** 锚点绑定的进程实例令牌(pid → 并入锚点后首次采样到的令牌;令牌变化说明 pid 已被复用) */
   private readonly anchorInstances = new Map<number, string>()
+  /** 归属缓存与上报归属绑定的实例令牌(pid → 令牌;令牌变化即丢弃该 pid 的缓存结论) */
+  private readonly cacheInstances = new Map<number, string>()
 
   /** 构造解析器 */
   constructor(
@@ -200,17 +202,19 @@ export class OwnerResolver {
     instances?: ReadonlyMap<number, string>,
   ): Map<number, ProcessOwner> {
     this.parents = parents ?? new Map()
+    const alive = new Set(pids)
+    // 先校验实例身份再解析:被复用的 pid 不会在当轮沿用上一进程的锚点或缓存结论
+    this.pruneAnchors(alive, instances)
+    this.pruneInstances(alive, instances)
     const owners = new Map<number, ProcessOwner>()
     for (const pid of pids) {
       const owner = this.resolveOne(pid)
       if (owner !== undefined) owners.set(pid, owner)
     }
-    const alive = new Set(pids)
     // 裁剪:只保留当前存在的 pid,规避 pid 复用带来的错误归属
     for (const pid of [...this.cached.keys()]) if (!alive.has(pid)) this.cached.delete(pid)
     for (const pid of [...this.reported.keys()]) if (!alive.has(pid)) this.reported.delete(pid)
     for (const pid of [...this.environFailures.keys()]) if (!alive.has(pid)) this.environFailures.delete(pid)
-    this.pruneAnchors(alive, instances)
     return owners
   }
 
@@ -221,6 +225,29 @@ export class OwnerResolver {
    * 3. 锚点进程本身退出后,只要仍有存活进程把它当作祖先,就保留锚点(否则后代归属会翻回未归因);
    * 4. 既不在采样集合、也没有任何后代引用时才删除,保证映射不会无限增长。
    */
+  /**
+   * 归属缓存与环境结论同样绑定实例令牌:pid 被复用时,上一进程解析出的会话(以及显式汇报的会话)
+   * 不得沿用到新进程上 —— 锚点已有这套校验,这两处原先只按 pid 记账。
+   */
+  private pruneInstances(alive: ReadonlySet<number>, instances: ReadonlyMap<number, string> | undefined): void {
+    for (const pid of [...this.cached.keys(), ...this.reported.keys()]) {
+      if (!alive.has(pid)) {
+        this.cacheInstances.delete(pid)
+        continue
+      }
+      const token = instances?.get(pid)
+      if (token === undefined) continue
+      const bound = this.cacheInstances.get(pid)
+      if (bound === undefined) this.cacheInstances.set(pid, token)
+      else if (bound !== token) {
+        this.cached.delete(pid)
+        this.reported.delete(pid)
+        this.cacheInstances.delete(pid)
+      }
+    }
+    for (const pid of [...this.cacheInstances.keys()]) if (!alive.has(pid)) this.cacheInstances.delete(pid)
+  }
+
   private pruneAnchors(alive: ReadonlySet<number>, instances: ReadonlyMap<number, string> | undefined): void {
     for (const pid of this.spawnAnchors.keys()) {
       const token = instances?.get(pid)

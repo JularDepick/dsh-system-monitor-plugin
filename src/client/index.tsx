@@ -1601,7 +1601,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 此时界面要么保持加载态、要么继续显示既有内容,不会出现 1970 年采样时间与全 0 指标。
    */
   const sampled = snapshot !== null
-  // 加载中:骨架屏占位
+  // 加载中:只给一行状态文本(不铺填充块),版面留白由面板底色承担
   if (snapshot === null && !unavailable) {
     return (
       <div className="sm-root sm-column" style={columnStyle}>
