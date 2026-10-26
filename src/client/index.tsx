@@ -246,15 +246,16 @@ function seriesColor(index: number): string {
  * 各分段的最终配色:主进程/宿主取语义蓝、会话卡的子代理合计行取语义紫,
  * 其余成员按出现顺序取系列色——系列色不参与主泳道,主泳道也不占用系列色名额。
  */
-function groupColors(groups: readonly ShareGroup[]): string[] {
-  let next = 0
-  return groups.map((group) => {
+function groupColors(groups: readonly ShareGroup[], start = 0): { colors: string[]; next: number } {
+  let next = start
+  const colors = groups.map((group) => {
     if (group.primary === true) return LANE_COLOR_PRIMARY
     if (group.key === SUBAGENT_GROUP_KEY) return LANE_COLOR_SUBAGENT
     const color = seriesColor(next)
     next += 1
     return color
   })
+  return { colors, next }
 }
 
 /** 文本宽度估算(像素):中日韩字符按整宽计,其余按拉丁字宽计 */
@@ -824,6 +825,8 @@ function StatusBadge(props: { tone: 'ok' | 'warn' | 'error'; label: string }): R
  */
 function ShareTrack(props: {
   groups: readonly ShareGroup[]
+  /** 成员配色(与明细表同源;缺省时按本组从头取色) */
+  colors?: readonly string[]
   pick: (group: ShareGroup) => number
   /** 段文字候选(缺省用整机百分比;内存泳道给「具体数值 · 百分比」等逐级退化的候选) */
   texts?: ShareTexts
@@ -836,7 +839,7 @@ function ShareTrack(props: {
 }): ReactNode {
   const values = props.groups.map((group) => props.pick(group))
   const weights = computeLaneWeights(values)
-  const colors = groupColors(props.groups)
+  const colors = props.colors ?? groupColors(props.groups).colors
   const dshTotal = values.reduce((sum, value) => sum + value, 0)
   const othersText = formatPercent(props.others)
   const idleText = formatPercent(props.idle)
@@ -947,6 +950,7 @@ function ShareTrack(props: {
 function ShareRow(props: {
   label: string
   groups: readonly ShareGroup[]
+  colors?: readonly string[]
   pick: (group: ShareGroup) => number
   texts?: ShareTexts
   others: number
@@ -962,6 +966,7 @@ function ShareRow(props: {
       </span>
       <ShareTrack
         groups={props.groups}
+        {...(props.colors === undefined ? {} : { colors: props.colors })}
         pick={props.pick}
         {...(props.texts === undefined ? {} : { texts: props.texts })}
         others={props.others}
@@ -1022,6 +1027,8 @@ function DimensionCard(props: {
   title: string
   countText: string
   groups: readonly ShareGroup[]
+  /** 成员配色(由上层按四卡串行分配,与明细表同源) */
+  colors?: readonly string[]
   machine: MachineShare
   names: boolean
   t: PanelTranslate
@@ -1116,6 +1123,7 @@ function DimensionCard(props: {
         <ShareRow
           label={props.t('table.column.cpu')}
           groups={props.groups}
+          {...(props.colors === undefined ? {} : { colors: props.colors })}
           pick={(group) => group.cpuPercent}
           others={props.machine.othersCpu}
           idle={props.machine.idleCpu}
@@ -1126,6 +1134,7 @@ function DimensionCard(props: {
         <ShareRow
           label={props.t('table.column.memory')}
           groups={props.groups}
+          {...(props.colors === undefined ? {} : { colors: props.colors })}
           pick={(group) => group.memoryPercent}
           texts={{
             // 依次尝试:数值 · 百分比 → 仅数值 → 仅百分比(放不下就退化,悬停恒给最全的一条)
@@ -1811,12 +1820,18 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   if (laneStrategy === 'midpoint' && lanePlan.pool.length !== lanePool.length) {
     lanePoolPendingRef.current = { pool: lanePlan.pool, cursor: lanePlan.cursor }
   }
-  const currentSessionColors = groupColors(currentSessionGroups)
-  /** 两张卡各自的成员配色(主进程/宿主固定品牌蓝,其余按系列色) */
-  const processColors = groupColors(processGroups)
-  const sessionColors = groupColors(sessionGroups)
-  /** 子代理卡配色:独立分配,使其不与会话卡的同一会话取色冲突(两卡各自表内同源) */
-  const subagentColors = groupColors(subagentGroups)
+  /**
+   * 四张卡的成员配色按顺序串行分配(主进程与宿主、会话卡的子代理合计行不占名额):
+   * 逐卡从上一卡终点继续取色, 卡间不撞色, 消耗量也与取色方案算出的容量一致。
+   */
+  const currentSessionPlan = groupColors(currentSessionGroups, 0)
+  const processPlan = groupColors(processGroups, currentSessionPlan.next)
+  const sessionPlan = groupColors(sessionGroups, processPlan.next)
+  const subagentPlan = groupColors(subagentGroups, sessionPlan.next)
+  const currentSessionColors = currentSessionPlan.colors
+  const processColors = processPlan.colors
+  const sessionColors = sessionPlan.colors
+  const subagentColors = subagentPlan.colors
   /** 进程分组键 → 样本(进程维度分组与样本一一对应,按键取用避免下标耦合) */
   const sampleByPid = new Map(processes.map((sample) => [String(sample.handle.pid), sample]))
 
@@ -2177,6 +2192,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         countText={t('currentProcess.count', { count: currentSessionGroups.length })}
         extraMeta={currentSessionSubagentMeta}
         groups={currentSessionGroups}
+        colors={currentSessionColors}
         machine={machine}
         names={laneNames}
         t={t}
@@ -2215,6 +2231,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         title={t('table.title')}
         countText={t('table.count', { count: processGroups.length })}
         groups={processGroups}
+        colors={processColors}
         machine={machine}
         names={laneNames}
         t={t}
@@ -2253,6 +2270,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         title={t('session.title')}
         countText={t('session.count', { count: sessionCount })}
         groups={sessionGroups}
+        colors={sessionColors}
         machine={machine}
         names={laneNames}
         t={t}
@@ -2284,6 +2302,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         title={t('subagent.title')}
         countText={t('subagent.count', { count: subagentGroups.length })}
         groups={subagentGroups}
+        colors={subagentColors}
         machine={machine}
         names={laneNames}
         t={t}
