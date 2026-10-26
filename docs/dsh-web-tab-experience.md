@@ -106,7 +106,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 | 槽锚点 | ui-renderer 为每个 outlet 生成包裹 div,样式 `display: contents`,不参与布局;注入组件即宿主容器的直接子元素 |
 | 会话视图区 | `.viewArea` 为纵向 flex(`flex: 1; min-height: 0; display: flex`)且无内边距;`composer-overlay` 模式下滚动容器 `overflow: hidden auto`,视图区 `flex: 1 1 0; min-height: 0` |
 | 注入面板应对 | 自带内边距(宿主不提供);根用纵向 flex 滚动容器(`flex: 0 1 auto; min-height: 0; overflow-y: auto`)承担滚动;直接子块用 `flex: none` 锁死不参与压缩(卡片带 `overflow: hidden` 时其 flex 自动最小尺寸按规范为 0,不锁死会被压扁并裁掉内容) |
-| 内容列宽 | `max-width` 用 `calc(var(--dsh-chat-content-width, 748px) + 两侧 gutter)`;`--dsh-chat-content-width` 由宿主在 0.2.0-rc.2 仍定义,窗口更窄时由 gutter 兜底留白 |
+| 内容列宽 | 面板按 tab 区域可用宽度排版,用固定的 `max-width` 收窄超宽屏,不用 `calc(var(--dsh-chat-content-width, 748px) + gutter)` 对齐对话列宽(宽 tab 区域会出现两侧大片空白) |
 
 ## 四,踩过的坑
 
@@ -119,7 +119,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 7. **文案跟随界面语言必须走宿主 locale 服务**:按 `navigator.language` 判定只跟浏览器语言走,与 dsh 界面语言不一致(用户在设置页切换语言时插件文案不跟着变);正确做法:字典以命名空间注册(`ctx.locale.register(ns, { zh, en })`,内置语言 id 只有 `zh`/`en`),并在槽注册时声明 `locale: ns`,框架据此向组件注入译文函数,语言切换时重建该座位;`label` 用 `ctx.locale.bind(ns)` 的 thunk 即可跟随语言;声明了 `locale` 却不注册字典会在渲染期响亮失败;`ctx.locale` 的类型家在 `@deepseek-ai/dsh-client-locale`(只承载类型,不必作为运行时依赖)
 8. **注册的 inline 行高必须带单位**:React 内联样式的 `lineHeight` 属无单位属性,数值会被原样输出为"倍数 × font-size"(`lineHeight: 20` 在 13px 字号下是 260px),组件会因此被撑出大片空白;写 `'20px'` 这类带单位字符串;复刻渲染台验证时也要保持同一数值语义,否则渲染台"通过"而真实页面崩坏
 9. **数据端点返回 200 不等于有数据**:自定义数据路由在"暂无数据"时若返回 200 + 占位结构,客户端必须按字段是否有效判定(如采样时刻为 0),否则会把占位值当真实数据渲染
-10. **注入面板的无障碍要自己补齐**:宿主不会替你补键盘与读屏语义。实测有效的做法:折叠开关用原生 `<button>` 并带 `aria-expanded`;面板内子页(替换式配置页)加 `role="region"` 与名称,入口按钮带 `aria-expanded` 与 `aria-controls`,展开时把焦点移入子页(`tabIndex={-1}` + `focus()`),收起时(含 ESC)把焦点还给入口按钮,否则焦点会落在已卸载的节点上;状态类信息另给一个 `role="status"` + `aria-live="polite"` 的仅读屏文本(用 `clip-path: inset(50%)` 之类做视觉隐藏,不要用 `display:none`);纯装饰的色块与图标加 `aria-hidden`;错误提示卡用 `role="alert"`;表头用 `<th scope="col">`;骨架动画在 `prefers-reduced-motion: reduce` 下关闭
+10. **注入面板的无障碍要自己补齐**:宿主不会替你补键盘与读屏语义。实测有效的做法:折叠开关用原生 `<button>` 并带 `aria-expanded`;面板内子页(替换式配置页)加 `role="region"` 与名称,入口按钮带 `aria-expanded` 与 `aria-controls`,展开时把焦点移入子页(`tabIndex={-1}` + `focus()`),收起时(含 ESC)把焦点还给入口按钮,否则焦点会落在已卸载的节点上;状态类信息另给一个 `role="status"` + `aria-live="polite"` 的仅读屏文本(用 `clip-path: inset(50%)` 之类做视觉隐藏,不要用 `display:none`);纯装饰的色块与图标加 `aria-hidden`;错误提示卡用 `role="alert"`;表头用 `<th scope="col">`;加载态若用动画(本项目已改为静态状态文本)需在 `prefers-reduced-motion: reduce` 下关闭
 11. **列可隐藏时表头与行单元必须同源取舍**:动态列宽的表格用 `colgroup` 定列,隐藏某一列时若只改表头不改行单元(或反之),列数错位会直接错行;把可隐藏列抽成一份清单,表头构造与行构造都按同一份清单取舍,跨列表头(如"内存"占两列)的 `colSpan` 也要随之在 1 与 2 之间切换
 12. **配色要按宿主真实取值挑 token,不能按名字猜**:宿主主题样式是 `body{…}`(浅色)与 `body[data-ds-dark-theme]{…}`(深色)两套声明,把 token 解析成具体颜色后再选,能避开几个必然踩到的坑 —— `--dsw-alias-bg-layer-1/2/3` 在浅色主题下**同为 `#fff`**(拿它当卡片面等于没有层次,卡片面应取 `--dsw-alias-bg-module-platform`),`--dsw-alias-brand-primary` 在本设计系统里是**黑白**(浅 `#0f1115` / 深 `#f9fafb`,当强调色会与正文同色,强调色应取 `--dsw-alias-state-business-primary`),`--dsw-alias-border-l1` 浅色主题只有 4% 黑(1px 描边肉眼近乎不可见,描边从二级起用),`--dsw-alias-label-caption` 压在浅灰面上对比度不足 3(压在灰面上的文字用三级或次档);另外深色主题的相邻面色容易过近(如 `scrollbar-bg-l1` `#3c3c3d` 与卡片面 `#353638` 只差 0.008 亮度),深色下要挑开一档(`scrollbar-bg-l2` `#545557`);建议把「面色台阶单调 + 关键文字/描边对比度达标」写成脚本按真实取值逐项断言,比肉眼可靠
 

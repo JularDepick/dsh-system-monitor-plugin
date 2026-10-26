@@ -241,9 +241,6 @@ export const PANEL_TYPOGRAPHY = {
  *         普通成员按顺序取「泳道预备颜色池」(见下方 LANE_COLOR_* 与 DEFAULT_LANE_COLOR_POOL)。
  */
 
-/** 面板底(面板自绘底色,不再依赖宿主页面底色) */
-export const PANEL_SURFACE_COLOR = 'var(--sm-surface)'
-
 /** 卡片面(统计卡与四张维度卡共用:蓝白主题下的白面/深蓝面) */
 export const PANEL_CARD_COLOR = 'var(--sm-card)'
 

@@ -60,7 +60,6 @@ import {
   PANEL_SHARE_BAR_HEIGHT,
   PANEL_SHARE_BAR_HEIGHT_NAMED,
   PANEL_SETTINGS_REGION_ID,
-  PANEL_SURFACE_COLOR,
   PANEL_SHARE_DSH_RATIO,
   LANE_COLOR_EMPTY,
   PANEL_SHARE_IDLE_RATIO,
@@ -462,7 +461,7 @@ const panelCss = `
 /* 面板独立配色(蓝白色调为主):取值全部在本插件内定义,不继承宿主主题 token;
    深色取值挂在宿主深色主题属性下,使面板在两套宿主主题下都保持可读 */
 .sm-root {
-  --sm-surface: #eef4fd; --sm-card: #ffffff; --sm-card-head: #e4eefc; --sm-track: #cfdff5;
+  --sm-card: #ffffff; --sm-card-head: #e4eefc; --sm-track: #cfdff5;
   --sm-border: #cdddf2; --sm-border-strong: #a9c3e6;
   --sm-text-primary: #12233d; --sm-text-secondary: #45597a; --sm-text-tertiary: #6f83a3;
   --sm-accent: #2470d8; --sm-active: #2470d824;
@@ -470,7 +469,7 @@ const panelCss = `
   --sm-idle: #dce8f9; --sm-empty: #12233d2e;
 }
 body[data-ds-dark-theme] .sm-root {
-  --sm-surface: #0d1524; --sm-card: #16223a; --sm-card-head: #2a3a58; --sm-track: #3d5178;
+  --sm-card: #16223a; --sm-card-head: #2a3a58; --sm-track: #3d5178;
   --sm-border: #33456a; --sm-border-strong: #5a7099;
   --sm-text-primary: #e9effb; --sm-text-secondary: #b5c3dc; --sm-text-tertiary: #8595b1;
   --sm-accent: #5b9bff; --sm-active: #5b9bff33;
@@ -519,8 +518,8 @@ const columnStyle: CSSProperties = {
   boxSizing: 'border-box',
   padding: `${PANEL_TOP_PADDING}px ${PANEL_COLUMN_GUTTER}px ${PANEL_BOTTOM_PADDING}px`,
   color: PANEL_TEXT_PRIMARY_COLOR,
-  // 面板自身铺底色:可读性不依赖宿主页面背景(见设计细节 面板配色)
-  background: PANEL_SURFACE_COLOR,
+  // 面板容器不铺底色:最外层透明,由宿主页面底色承托(卡片自带底色保证可读性)
+  background: 'transparent',
   textAlign: 'left',
   ...PANEL_TYPOGRAPHY.base,
 }
@@ -2198,14 +2197,14 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         row={(group, index, sampled) => {
           const sample = sampleByPid.get(group.key)
           const last = index === currentSessionGroups.length - 1
-          const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
+          const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           const label = rowLabel(group)
           return (
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, currentSessionColors[index], label, sampled)}
               {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
               {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent >= cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
               {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('current', group, label)}
@@ -2243,7 +2242,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           const last = index === processGroups.length - 1
           const owner = sample?.owner
           const sessionLabel = sample === undefined ? '--' : sessionLabelOf(sample)
-          const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
+          const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           return (
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, processColors[index], group.label, sampled)}
@@ -2254,7 +2253,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
                   <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionLabel}</span>
                 </td>
               ) : null}
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: group.label, value: formatPercent(group.cpuPercent) }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent >= cpuWarnThreshold, t('aria.usage.cpu', { name: group.label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
               {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: group.label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('process', group, group.label)}
@@ -2280,12 +2279,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         row={(group, index, sampled) => {
           const last = index === sessionGroups.length - 1
           const label = rowLabel(group)
-          const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
+          const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           return (
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, sessionColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent >= cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
               {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('conversation', group, label)}
@@ -2312,12 +2311,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         row={(group, index, sampled) => {
           const last = index === subagentGroups.length - 1
           const label = rowLabel(group)
-          const high = group.memoryPercent > PANEL_HIGH_LOAD_THRESHOLD
+          const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           return (
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, subagentColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent >= cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
               {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label, value: formatPercent(group.memoryPercent) })) : null}
               {actionCell('subagent', group, label)}

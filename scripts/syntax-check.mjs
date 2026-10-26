@@ -96,6 +96,46 @@ for (const [file, lang] of Object.entries(iniExpected)) {
   }
 }
 
+// 翻译字典与 INI 的双向一致性(键集与占位符):规范中提到的「本地检查」即此处
+{
+  const source = readFileSync(join(root, 'src/client/i18n.ts'), 'utf8')
+  const zhStart = source.indexOf('const zhDictionary')
+  const enStart = source.indexOf('const enDictionary')
+  const blocks = { 'zh-CN': source.slice(zhStart, enStart), 'en-US': source.slice(enStart) }
+  const dictOf = (text) => {
+    const map = new Map()
+    const re = /'([a-z][A-Za-z0-9.]*)':\s*'((?:[^'\\]|\\.)*)'/g
+    let match
+    while ((match = re.exec(text)) !== null) map.set(match[1], match[2])
+    return map
+  }
+  const placeholders = (text) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',')
+  const iniOf = (file) => {
+    const body = /\[translation\]([\s\S]*)$/.exec(readFileSync(join(root, file), 'utf8'))
+    const map = new Map()
+    for (const line of (body === null ? '' : body[1]).split('\n')) {
+      const index = line.indexOf('=')
+      if (index <= 0) continue
+      map.set(line.slice(0, index).trim(), line.slice(index + 1).trim())
+    }
+    return map
+  }
+  checked += 1
+  for (const [lang, iniFile] of [['zh-CN', 'src/translation/zh-CN.ini'], ['en-US', 'src/translation/en-US.ini']]) {
+    const dict = dictOf(blocks[lang])
+    const ini = iniOf(iniFile)
+    for (const key of dict.keys()) if (!ini.has(key)) failures.push(`i18n.ts(${lang}) 有而 ${iniFile} 缺失: ${key}`)
+    for (const key of ini.keys()) if (!dict.has(key)) failures.push(`${iniFile} 有而 i18n.ts(${lang}) 缺失: ${key}`)
+    for (const [key, value] of dict) {
+      const other = ini.get(key)
+      if (other === undefined) continue
+      if (placeholders(value) !== placeholders(other)) {
+        failures.push(`${key} 占位符不一致(${lang}): 字典[${placeholders(value)}] ini[${placeholders(other)}]`)
+      }
+    }
+  }
+}
+
 console.log(`语法验证:检查 ${checked} 个文件`)
 if (failures.length === 0) {
   console.log('结果:通过,无语法错误')
