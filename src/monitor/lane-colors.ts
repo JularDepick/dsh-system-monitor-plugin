@@ -12,8 +12,10 @@
  * 作者:JularDepick
  */
 
-/** 取色方案:`cycle` 循环复用,`midpoint` 自动取间色新增 */
-export type LaneColorStrategy = 'cycle' | 'midpoint'
+import { LANE_COLOR_STRATEGIES } from '../constants'
+
+/** 取色方案:`cycle` 循环复用,`midpoint` 自动取间色新增(取值集合由常量定义,避免多处硬编码漂移) */
+export type LaneColorStrategy = (typeof LANE_COLOR_STRATEGIES)[number]
 
 /** 取色结果:成员颜色序列、可能已增长的池、下一次取中间色的候选起点 */
 export interface LaneColorPlan {

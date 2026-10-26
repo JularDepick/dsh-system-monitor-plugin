@@ -10,6 +10,7 @@ import {
   DEFAULT_CPU_SCOPE,
   DEFAULT_LANE_COLOR_POOL,
   DEFAULT_LANE_COLOR_STRATEGY,
+  LANE_COLOR_STRATEGIES,
   MAX_LANE_COLOR_POOL_SIZE,
   MIN_LANE_COLOR_POOL_SIZE,
   DEFAULT_LANE_NAMES,
@@ -53,5 +54,5 @@ export const Config: Schema<Config> = Schema.object({
   cpuScope: Schema.union(['machine', 'core']).default(DEFAULT_CPU_SCOPE),
   retainRounds: Schema.number().min(MIN_RETAIN_ROUNDS).max(MAX_RETAIN_ROUNDS).step(1).default(DEFAULT_RETAIN_ROUNDS),
   laneColorPool: Schema.array(Schema.string()).default([...DEFAULT_LANE_COLOR_POOL]),
-  laneColorStrategy: Schema.union(['cycle', 'midpoint']).default(DEFAULT_LANE_COLOR_STRATEGY),
+  laneColorStrategy: Schema.union([...LANE_COLOR_STRATEGIES]).default(DEFAULT_LANE_COLOR_STRATEGY),
 })

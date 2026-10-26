@@ -61,6 +61,7 @@ import {
   PANEL_SHARE_BAR_HEIGHT,
   PANEL_SHARE_BAR_HEIGHT_NAMED,
   PANEL_SETTINGS_REGION_ID,
+  PANEL_SURFACE_COLOR,
   PANEL_SHARE_DSH_RATIO,
   LANE_COLOR_EMPTY,
   PANEL_SHARE_IDLE_RATIO,
@@ -148,6 +149,11 @@ interface ShareGroup {
    * 缺席时按同一身份归零保留;缺省时退回 `key`。
    */
   stickyKey?: string
+  /**
+   * 该行是否为归属为子代理的进程(进程维度分组时标记)。
+   * 本会话卡据此统计「其中子代理」合计,使两行读数与留存后的行保持同源。
+   */
+  subagent?: boolean
 }
 
 /** 表格列定义:表头单元(由前一列 colSpan 覆盖时为 null)与内容自适应宽度 */
@@ -350,6 +356,7 @@ function groupByProcess(
       ...(subagent && subagentNote !== undefined ? { note: subagentNote } : {}),
       // 行留存按进程名称记账:同名进程重启(pid 变化)后仍接着原行的计数
       stickyKey: displayName(sample),
+      ...(subagent ? { subagent: true } : {}),
       ...(sample.handle.pid === rootPid ? { primary: true } : {}),
       // 采集值为整机口径,按展示口径换算(单核口径下超过 100% 属正常)
       cpuPercent: scaleCpuPercent(sample.cpuPercent, cpuFactor),
@@ -513,6 +520,8 @@ const columnStyle: CSSProperties = {
   boxSizing: 'border-box',
   padding: `${PANEL_TOP_PADDING}px ${PANEL_COLUMN_GUTTER}px ${PANEL_BOTTOM_PADDING}px`,
   color: PANEL_TEXT_PRIMARY_COLOR,
+  // 面板自身铺底色:可读性不依赖宿主页面背景(见设计细节 面板配色)
+  background: PANEL_SURFACE_COLOR,
   textAlign: 'left',
   ...PANEL_TYPOGRAPHY.base,
 }
@@ -853,10 +862,17 @@ function ShareTrack(props: {
     <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
       <div
         role="img"
-        aria-label={
-          `${props.label}:${othersName} ${othersText},` +
-          `${props.t('chart.dsh')} ${formatPercent(dshTotal)},${idleName} ${idleText}`
-        }
+        // 读屏口径:先给合计,再逐段给出成员名与数值(段内文字只是视觉标注,放不下会被省略)
+        aria-label={[
+          `${props.t('chart.total')} ${props.label}`,
+          `${othersName} ${othersText}`,
+          ...props.groups.map((group) => {
+            const value = props.pick(group)
+            return `${group.label} ${segmentCandidates(group, value)[0] ?? formatPercent(value)}`
+          }),
+          `${props.t('chart.dsh')} ${formatPercent(dshTotal)}`,
+          `${idleName} ${idleText}`,
+        ].join(', ')}
         style={{
           display: 'flex',
           height: props.names ? PANEL_SHARE_BAR_HEIGHT_NAMED : PANEL_SHARE_BAR_HEIGHT,
@@ -1521,8 +1537,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             options={[
               { value: 'cycle', label: t('config.laneColorStrategyCycle') },
               { value: 'midpoint', label: t('config.laneColorStrategyMidpoint') },
+              // 取值集合以常量 LANE_COLOR_STRATEGIES 为准(上方两项与之同源,增删方案时一并调整)
             ]}
-            onChange={(next) => setPreference('laneColorStrategy', next === 'midpoint' ? 'midpoint' : 'cycle')}
+            onChange={(next) => setPreference('laneColorStrategy', normalizeLaneColorStrategy(next, laneStrategy))}
             label={t('config.laneColorStrategy')}
           />
         </div>
@@ -1674,26 +1691,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     t('session.subagent'),
   )
   /** 本会话派生的子代理进程(卡头的「其中子代理」合计只在这些进程存在时给出) */
-  const currentSessionSubagentProcesses = currentSessionProcesses.filter((sample) => sample.owner?.subagent === true)
-  /**
-   * 本会话卡头部的第二行元信息(「其中子代理」合计,只在存在子代理进程时给出)。
-   * 分隔符与头部第一行的计数与合计同源(` · `),两行读数口径一致。
-   */
-  const currentSessionSubagentMeta = currentSessionSubagentProcesses.length === 0
-    ? undefined
-    : [
-      t('currentProcess.subagentCount', { count: currentSessionSubagentProcesses.length }),
-      t('chart.headerTotal', {
-        metric: t('table.column.cpu'),
-        value: formatPercent(
-          currentSessionSubagentProcesses.reduce((sum, sample) => sum + scaleCpuPercent(sample.cpuPercent, cpuFactor), 0),
-        ),
-      }),
-      t('chart.headerTotal', {
-        metric: t('table.column.memory'),
-        value: formatPercent(currentSessionSubagentProcesses.reduce((sum, sample) => sum + sample.memoryPercent, 0)),
-      }),
-    ].join(' · ')
+  const hasCurrentSessionSubagent = currentSessionProcesses.some((sample) => sample.owner?.subagent === true)
 
   /**
    * 表格排序:在留存之前对「本轮采样到的行」排序(未采样行按留存顺序附在其后),
@@ -1772,6 +1770,26 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const processGroups = processCard.groups
   const sessionGroups = sessionCard.groups
   const subagentGroups = subagentCard.groups
+  /**
+   * 本会话卡头部的第二行元信息(「其中子代理」合计)。
+   * 与第一行的计数同源(都取留存后的行),故子代理进程退出后两行一起变化,不会一行先消失。
+   */
+  const currentSessionSubagentRows = currentSessionGroups.filter(
+    (group) => group.subagent === true && group.key !== HOST_GROUP_KEY,
+  )
+  const currentSessionSubagentMeta = currentSessionSubagentRows.length === 0 || !hasCurrentSessionSubagent
+    ? undefined
+    : [
+      t('currentProcess.subagentCount', { count: currentSessionSubagentRows.length }),
+      t('chart.headerTotal', {
+        metric: t('table.column.cpu'),
+        value: formatPercent(currentSessionSubagentRows.reduce((sum, group) => sum + group.cpuPercent, 0)),
+      }),
+      t('chart.headerTotal', {
+        metric: t('table.column.memory'),
+        value: formatPercent(currentSessionSubagentRows.reduce((sum, group) => sum + group.memoryPercent, 0)),
+      }),
+    ].join(' · ')
   /** 会话卡计数只数真实会话:宿主与未归因是补充行,不计入会话数(卡片与导出共用同一口径) */
   const sessionCount = sessionGroups.filter(
     (group) => group.key !== HOST_GROUP_KEY && group.key !== UNATTRIBUTED_GROUP_KEY && group.key !== SUBAGENT_GROUP_KEY,
@@ -1891,7 +1909,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   if (snapshot.cpuQuotaCores !== null) quotaParts.push(`${snapshot.cpuQuotaCores} ${t('summary.cores')}`)
   if (snapshot.memoryLimitBytes !== null) quotaParts.push(formatBytes(snapshot.memoryLimitBytes))
 
-  const summary: { key: 'summary.sampledAt' | 'summary.platform' | 'summary.pollInterval' | 'summary.cpuCount' | 'summary.totalMemory' | 'summary.rootPid' | 'summary.others' | 'summary.quota'; value: string }[] = [
+  const summary: { key: 'summary.sampledAt' | 'summary.platform' | 'summary.pollInterval' | 'summary.cpuCount' | 'summary.totalMemory' | 'summary.rootPid' | 'summary.others' | 'summary.quota' | 'summary.unreadable'; value: string }[] = [
     { key: 'summary.sampledAt', value: formatDateTime(snapshot.sampledAt) },
     { key: 'summary.platform', value: snapshot.platform || t('summary.platformUnknown') },
     { key: 'summary.pollInterval', value: `${snapshot.pollInterval}ms` },
@@ -1900,11 +1918,19 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     ...(quotaParts.length === 0 ? [] : [{ key: 'summary.quota' as const, value: quotaParts.join(' / ') }]),
     { key: 'summary.rootPid', value: String(snapshot.rootPid) },
     { key: 'summary.others', value: String(snapshot.totals.othersCount) },
+    // 读到但无权读取的进程数:它们不计入任何分组,会让「空闲」偏高,故在降级时一并给出数量
+    ...(snapshot.unreadableCount > 0 ? [{ key: 'summary.unreadable' as const, value: String(snapshot.unreadableCount) }] : []),
   ]
 
-  /** 单元格中的数值(高占用时按语义色高亮) */
-  const valueCell = (text: string, high: boolean, key?: string): ReactNode => (
-    <td key={key} style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums', color: high ? PANEL_STATE_ERROR_COLOR : undefined }}>
+  /**
+   * 单元格中的数值(高占用时按语义色高亮)。
+   * `ariaLabel` 给读屏用的完整说明(如「某进程 CPU 占用率」),视觉仍只显示数值。
+   */
+  const valueCell = (text: string, high: boolean, ariaLabel?: string): ReactNode => (
+    <td
+      style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums', color: high ? PANEL_STATE_ERROR_COLOR : undefined }}
+      {...(ariaLabel === undefined ? {} : { 'aria-label': ariaLabel })}
+    >
       {text}
     </td>
   )
@@ -1941,9 +1967,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 16,
-          height: 16,
+          width: 24,
+          height: 24,
           padding: 0,
+          borderRadius: 4,
           border: 'none',
           background: 'transparent',
           color: PANEL_TEXT_TERTIARY_COLOR,
@@ -2015,34 +2042,40 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     }] : []),
     actionColumn(),
   ]
-  /** 会话维度表的列定义(首列显示会话名,子代理带标注) */
-  const sessionLabels = sessionGroups.map(rowLabel)
-  const sessionColumns: PanelColumn[] = [
-    { head: head(t('session.column.session')), contentWidth: nameColumnWidth(sessionLabels) },
+  /**
+   * 会话类表的列结构(会话卡与子代理卡同构:名称,进程数,CPU,内存,内存占比,操作)。
+   * 内容宽度按各自的行内容计算,故两张卡各自按自己的名称与数值分配列宽(不互相压缩)。
+   */
+  const groupCardColumns = (labels: readonly string[], groups: readonly ShareGroup[]): PanelColumn[] => [
+    { head: head(t('session.column.session')), contentWidth: nameColumnWidth(labels) },
     {
       head: head(t('session.column.processes')),
       contentWidth: maxCellWidth(
-        [t('session.column.processes'), ...sessionGroups.map((group) => String(group.count))],
+        [t('session.column.processes'), ...groups.map((group) => String(group.count))],
         PANEL_TABLE_SESSION_COUNT_WIDTH,
       ),
     },
     {
       head: head(t('table.column.cpu')),
-      contentWidth: maxCellWidth([t('table.column.cpu'), ...sessionGroups.map((group) => formatPercent(group.cpuPercent))], PANEL_TABLE_CPU_WIDTH),
+      contentWidth: maxCellWidth([t('table.column.cpu'), ...groups.map((group) => formatPercent(group.cpuPercent))], PANEL_TABLE_CPU_WIDTH),
     },
     {
       head: head(t('table.column.memory'), columnVisible('memoryPercent') ? 2 : 1),
       contentWidth: maxCellWidth(
-        [t('table.column.memory'), ...sessionGroups.map((group) => formatBytes(group.memoryBytes))],
+        [t('table.column.memory'), ...groups.map((group) => formatBytes(group.memoryBytes))],
         PANEL_TABLE_MEMORY_VALUE_WIDTH,
       ),
     },
     ...(columnVisible('memoryPercent') ? [{
       head: null,
-      contentWidth: maxCellWidth(sessionGroups.map((group) => formatPercent(group.memoryPercent)), PANEL_TABLE_MEMORY_PERCENT_WIDTH),
+      contentWidth: maxCellWidth(groups.map((group) => formatPercent(group.memoryPercent)), PANEL_TABLE_MEMORY_PERCENT_WIDTH),
     }] : []),
     actionColumn(),
   ]
+  /** 会话维度表列定义(首列显示会话名,子代理合计行带标注) */
+  const sessionColumns = groupCardColumns(sessionGroups.map(rowLabel), sessionGroups)
+  /** 子代理维度表列定义:按子代理行自己的名称与数值计算列宽 */
+  const subagentColumns = groupCardColumns(subagentGroups.map(rowLabel), subagentGroups)
   /**
    * 本会话维度表的列定义(全部行同属当前会话及其派生的子代理,故不设会话列;
    * 子代理进程行在名称后带「子代理」标注,与会话卡把子代理并成合计行的口径互补)
@@ -2097,7 +2130,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       <div style={{ ...cardStyle, background: PANEL_CARD_COLOR, padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
           <span style={{ color: PANEL_TEXT_PRIMARY_COLOR, fontVariantNumeric: 'tabular-nums', ...PANEL_TYPOGRAPHY.kpi }}>
-            {processes.length}
+            {processGroups.length}
           </span>
           <span style={{ color: PANEL_TEXT_TERTIARY_COLOR, ...PANEL_TYPOGRAPHY.base }}>{t('stat.processes')}</span>
         </div>
@@ -2159,9 +2192,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
               {nameCell(group, currentSessionColors[index], label, sampled)}
               {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
               {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label })) : null}
               {actionCell('current', group, label)}
             </tr>
           )
@@ -2207,9 +2240,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
                   <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionLabel}</span>
                 </td>
               ) : null}
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: group.label }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: group.label })) : null}
               {actionCell('process', group, group.label)}
             </tr>
           )
@@ -2223,7 +2256,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         machine={machine}
         names={laneNames}
         t={t}
-        emptyText={t('empty.noProcesses')}
+        emptyText={t('empty.noSessions')}
         ariaLabel={t('session.title')}
         open={collapsed.conversation !== true}
         onToggle={() => toggleCard('conversation')}
@@ -2237,9 +2270,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, sessionColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label })) : null}
               {actionCell('conversation', group, label)}
             </tr>
           )
@@ -2258,7 +2291,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         ariaLabel={t('subagent.title')}
         open={collapsed.subagent !== true}
         onToggle={() => toggleCard('subagent')}
-        columns={sessionColumns}
+        columns={subagentColumns}
         sampled={subagentCard.sampled}
         row={(group, index, sampled) => {
           const last = index === subagentGroups.length - 1
@@ -2268,9 +2301,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, subagentColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
-              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold)}
+              {valueCell(formatPercent(group.cpuPercent), group.cpuPercent > cpuWarnThreshold, t('aria.usage.cpu', { name: label }))}
               {valueCell(formatBytes(group.memoryBytes), high)}
-              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high) : null}
+              {columnVisible('memoryPercent') ? valueCell(formatPercent(group.memoryPercent), high, t('aria.usage.memory', { name: label })) : null}
               {actionCell('subagent', group, label)}
             </tr>
           )
