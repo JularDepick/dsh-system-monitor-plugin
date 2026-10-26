@@ -12,7 +12,7 @@
 
 import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
-import { cpus, totalmem } from 'node:os'
+import { cpus, freemem, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { INSTANCE_TOKEN_TOLERANCE_MS, LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
@@ -513,6 +513,8 @@ export class ProcessCollector {
   private readonly memoryDenominator = this.limits.memoryLimitBytes ?? this.totalMemoryBytes
   /** Agent 汇报句柄(按 pid 合并) */
   private readonly reported = new Map<number, ProcessHandle>()
+  /** 汇报句柄绑定的实例令牌(pid → 令牌;令牌变化即作废该句柄,避免 pid 复用后沿用旧名称) */
+  private readonly reportedTokens = new Map<number, string>()
   /** 各进程实例的上一轮累计 CPU 时间(键见 `baselineKey`,秒) */
   private readonly lastCpu = new Map<string, number>()
   /**
@@ -612,9 +614,27 @@ export class ProcessCollector {
     }
     visit(this.rootPid)
 
-    // 已退出的汇报句柄移出集合
-    for (const pid of this.reported.keys()) {
-      if (!byPid.has(pid)) this.reported.delete(pid)
+    /**
+     * 汇报句柄的存续校验:
+     * 1. 已退出的移出集合;
+     * 2. 实例令牌变化说明该 pid 已被新进程复用,旧句柄的名称与父进程不得沿用(否则新进程会顶着旧名字
+     *    留在 dsh 泳道里,且不会自愈) —— 首次见到时记下令牌,不匹配即作废该句柄。
+     */
+    for (const pid of [...this.reported.keys()]) {
+      if (!byPid.has(pid)) {
+        this.reported.delete(pid)
+        this.reportedTokens.delete(pid)
+        continue
+      }
+      const record = byPid.get(pid) as ProcessRecord
+      const token = record.instanceToken ?? this.instanceTokens.get(pid)?.token
+      if (token === undefined) continue
+      const bound = this.reportedTokens.get(pid)
+      if (bound === undefined) this.reportedTokens.set(pid, token)
+      else if (bound !== token) {
+        this.reported.delete(pid)
+        this.reportedTokens.delete(pid)
+      }
     }
 
     // 采样集合:进程树在前,树外的汇报句柄按 pid 升序在后
@@ -683,6 +703,8 @@ export class ProcessCollector {
     const sampled = new Set(order)
     let othersCpuPercent = 0
     let othersMemoryBytes = 0
+    /** 整机口径的空闲内存(字节),按是否受容器配额限制分别推导,见下方口径说明 */
+    let idleMemoryBytes = 0
     let othersCount = 0
     for (const record of records) {
       if (sampled.has(record.pid)) continue
@@ -692,7 +714,23 @@ export class ProcessCollector {
     }
     const dshCpuPercent = processes.reduce((sum, sample) => sum + sample.cpuPercent, 0)
     const dshMemoryBytes = processes.reduce((sum, sample) => sum + sample.memoryBytes, 0)
+    /**
+     * 内存口径修正:进程工作集含共享内存(DLL,mmap 页),逐个相加会超过物理总量,
+     * 直接拿求和结果当整机占用会让「其他应用」读出 100% 以上、并把「空闲」永远截成 0。
+     * 故无内存配额时「空闲」取系统报告的空闲内存(截断到总量),
+     * 「其他应用」取「总量减空闲减已监控成员」;有配额时仍按配额口径推剩余,两端都截断到合法区间。
+     */
+    const memoryQuota = this.limits.memoryLimitBytes
+    const hasMemoryQuota = memoryQuota !== null && memoryQuota < this.totalMemoryBytes
+    if (hasMemoryQuota) {
+      othersMemoryBytes = Math.min(othersMemoryBytes, this.memoryDenominator)
+      idleMemoryBytes = Math.max(0, this.memoryDenominator - othersMemoryBytes - dshMemoryBytes)
+    } else {
+      idleMemoryBytes = Math.max(0, Math.min(freemem(), this.memoryDenominator))
+      othersMemoryBytes = Math.max(0, Math.min(this.memoryDenominator - idleMemoryBytes - dshMemoryBytes, this.memoryDenominator))
+    }
     const othersMemoryPercent = memoryPercentOf(othersMemoryBytes)
+    const idleMemoryPercent = memoryPercentOf(idleMemoryBytes)
     this.lastSampledAt = now
 
     // 读到但无权读取的进程既不计入 dsh 集合,也不会计入「其他应用」,会使「空闲」偏高,
@@ -716,7 +754,7 @@ export class ProcessCollector {
         othersMemoryPercent,
         othersCount,
         idleCpuPercent: Math.max(0, 100 - othersCpuPercent - dshCpuPercent),
-        idleMemoryPercent: Math.max(0, 100 - othersMemoryPercent - memoryPercentOf(dshMemoryBytes)),
+        idleMemoryPercent,
       },
     }
     // 首份快照就绪:唤醒等待中的数据端点请求
@@ -750,6 +788,8 @@ export class ProcessCollector {
   mergeReported(handles: readonly ProcessHandle[]): void {
     for (const handle of handles) {
       this.reported.set(handle.pid, handle)
+      // 新上报的句柄重新绑定实例令牌:该 pid 若已换进程,以本次采样到的实例为准
+      this.reportedTokens.delete(handle.pid)
       this.onReported(handle)
     }
   }

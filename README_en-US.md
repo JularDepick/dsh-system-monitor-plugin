@@ -11,7 +11,7 @@
 
 </div>
 
-A plugin for dsh: monitor the resource utilization of dsh system processes, and report the results to the user in the form of charts
+A plugin for dsh: monitor the resource utilization of dsh processes and their spawned children, and report the results in panel charts
 
 Supports dsh 0.2.1-rc.1, 0.2.1-rc.2 and 0.2.1-rc.3
 
@@ -24,7 +24,7 @@ Supports dsh 0.2.1-rc.1, 0.2.1-rc.2 and 0.2.1-rc.3
 - Container quota basis: percentages are computed against the CPU and memory quota of the running environment itself (falling back to the visible totals when no quota is readable), so readings inside a container are not diluted by host totals
 - Session attribution: processes are attributed to sessions through terminal mapping, explicit reporting, session environment variables and the child processes spawned by commands run in a session; the subprocess-entry source is active on every platform (on Windows and macOS, which cannot read process environments, it is the primary source; on Linux and WSL it identifies the intermediate layer of the systemd transient scope while the process environment fills in the rest of the chain), and the panel presents them across four dimensions: this session / all processes / sessions / subagents
 - Standalone palette: the panel uses its own blue-and-white palette (light and dark variants); share bars and table swatches are colored by role, with a fixed semantic color for the main process and host, the subagent total, other applications and idle
-- Lane color pool: ordinary processes and sessions take pool colors in order, and the pool can be added to, edited or trimmed in the plugin config and in the panel settings sub-page (16 colors by default); when there are more members than pool colors the lane color strategy decides, recycling existing colors (default) or auto-inserting the midpoint between two neighbouring colors and saving it into the config
+- Lane color pool: ordinary processes and sessions take pool colors in order, and the pool can be added to, edited or trimmed in the plugin config and in the panel settings sub-page (16 colors by default); when there are more members than pool colors the lane color strategy decides, recycling existing colors (default) or auto-inserting the midpoint between two neighbouring colors (the result is written into the browser-side local preference)
 - Handle reporting: a reporting tool allows the Agent to report process handles (e.g. subagent processes) that the plugin cannot identify on its own
 - Status and diagnostics: the panel reports one of three states (normal / degraded / data source unavailable; degradation has two causes - the query source fell back to a secondary command, or some processes were readable but not accessible, the latter making readings run slightly high), and the system info row lists logical processors, total memory, the container quota when present, the dsh process identity and the other-application process count, plus the unreadable process count while degraded; CPU or memory values at or above 90% are highlighted
 - Panel-only display: monitoring data is shown on the plugin UI panel only and is not exposed to dsh

@@ -355,8 +355,9 @@ function groupByProcess(
       key: String(sample.handle.pid),
       label: displayName(sample),
       ...(subagent && subagentNote !== undefined ? { note: subagentNote } : {}),
-      // 行留存按进程名称记账:同名进程重启(pid 变化)后仍接着原行的计数
-      stickyKey: displayName(sample),
+      // 行留存按进程名称记账:同名进程重启(pid 变化)后仍接着原行的计数。
+      // 去掉 .exe 后缀:CIM 给 node.exe 而降级链给 node,不归一会在降级轮出现同名双行
+      stickyKey: displayName(sample).replace(/\.exe$/i, ''),
       ...(subagent ? { subagent: true } : {}),
       ...(sample.handle.pid === rootPid ? { primary: true } : {}),
       // 采集值为整机口径,按展示口径换算(单核口径下超过 100% 属正常)
@@ -1073,15 +1074,11 @@ function DimensionCard(props: {
   const cpuTotal = props.groups.reduce((sum, group) => sum + group.cpuPercent, 0)
   const memoryTotal = props.groups.reduce((sum, group) => sum + group.memoryPercent, 0)
   /**
-   * 空闲内存绝对值:整机总量减去其他应用与已监控成员,下限截零;
-   * 与采集器的「空闲 = 100 − 其他 − dsh」口径同源,故百分比与绝对值一致。
+   * 空闲内存绝对值:由采集器给出的空闲百分比按整机总量回推。
+   * 采集器已按「系统空闲内存」推导该百分比(进程工作集含共享内存,不能用求和反推),
+   * 此处只做换算,保证绝对值与百分比严格一致。
    */
-  const idleMemoryBytes = Math.max(
-    0,
-    props.machine.totalMemoryBytes
-      - props.machine.othersMemoryBytes
-      - props.groups.reduce((sum, group) => sum + group.memoryBytes, 0),
-  )
+  const idleMemoryBytes = Math.round(props.machine.totalMemoryBytes * (props.machine.idleMemory / 100))
   /** 列宽:先按内容挤满,再把富余按各列内容比例分配(固定宽列不参与分配) */
   const columnWidths = layoutColumnWidths(props.columns, tableWidth)
   /** 折叠开关的提示文案(展开时提示可收起,收起时提示可展开) */
@@ -2218,7 +2215,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         emptyText={
           currentSessionId.length === 0
             ? t('empty.noSessionScope')
-            : currentSessionGroups.length === 0 && attributionMissed
+            : currentSessionGroups.length === 0 && (attributionMissed || snapshot?.degraded === true)
               ? t('empty.noAttribution')
               : t('empty.noCurrentProcesses')
         }
