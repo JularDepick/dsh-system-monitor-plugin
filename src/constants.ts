@@ -13,16 +13,7 @@ export const PLUGIN_NAME = 'dsh-system-monitor-plugin'
  * 插件版本号(面板页脚展示)。
  * 必须与 package.json 的 version 同步,迭代版本号时一并更新(见 version.index.md)。
  */
-export const PLUGIN_VERSION = '0.3.0'
-
-/** 默认语言(翻译回退与初始语言) */
-export const DEFAULT_LANGUAGE = 'zh-CN'
-
-/** 回退语言,翻译未命中时使用 */
-export const FALLBACK_LANGUAGE = 'zh-CN'
-
-/** 翻译文件目录,相对插件包根目录 */
-export const TRANSLATION_DIR = 'src/translation'
+export const PLUGIN_VERSION = '0.3.1'
 
 /** 资源采集轮询间隔默认值(毫秒) */
 export const DEFAULT_POLL_INTERVAL = 1000
@@ -33,6 +24,13 @@ export const DEFAULT_POLL_INTERVAL = 1000
  * 故配置面给出下界,越界在插件加载期响亮失败
  */
 export const MIN_POLL_INTERVAL = 250
+
+/**
+ * 资源采集轮询间隔上限(毫秒):
+ * Node 的定时器上限为 2147483647 毫秒,超过该值会被静默压成 1 毫秒并抛 TimeoutOverflowWarning,
+ * 等于把轮询变成查询进程风暴,故配置面同时给出上界并在定时器创建前再兜底收敛一次
+ */
+export const MAX_POLL_INTERVAL = 60000
 
 /** 泳道内名称显示开关的默认值(开启;由插件配置投影到面板载荷) */
 export const DEFAULT_LANE_NAMES = true
@@ -64,6 +62,18 @@ export const REPORT_TOOL_NAME = 'system_monitor_report'
 
 /** 系统进程查询超时(毫秒) */
 export const QUERY_TIMEOUT_MS = 10000
+
+/**
+ * 单次汇报的句柄条数上限:超出部分按拒绝处理(随回执返回原因),
+ * 避免一次调用把任意多 pid 灌进采集集合而使快照体量线性膨胀
+ */
+export const MAX_REPORTED_HANDLES = 256
+
+/** 汇报句柄的可读名称长度上限(字符),超出按拒绝处理 */
+export const MAX_HANDLE_NAME_LENGTH = 120
+
+/** 汇报句柄的会话标识长度上限(字符),超出按拒绝处理 */
+export const MAX_HANDLE_SESSION_ID_LENGTH = 200
 
 /**
  * 会话标识环境变量名:宿主在每次模型 shell 调用时把它注入子进程环境(见宿主 shell-env 注册表)。
@@ -347,9 +357,10 @@ export const PANEL_SHARE_NAME_PADDING = 0
 
 /**
  * 泳道内名称文字色的判定阈值:
- * 白色相对分段底色的对比度不低于该值即用白字(优先白色),否则退回黑字。
+ * 白色相对分段底色的对比度不低于该值即用白字,否则退回黑字。
+ * 取 WCAG AA 正文要求 4.5:泳道内名称是 12px 小字,白字在 3.0 至 4.4 的中明度底上不达标。
  */
-export const PANEL_SHARE_NAME_MIN_CONTRAST = 3
+export const PANEL_SHARE_NAME_MIN_CONTRAST = 4.5
 
 /** 配置子页设置行的最大宽度(像素):设置行只在舒适宽度内排布,避免标签与控件相距过远 */
 export const PANEL_SETTINGS_WIDTH = 560
@@ -402,6 +413,9 @@ export const PANEL_SWATCH_SIZE = 10
 
 /** 表格数据单元格左右内边距(像素,固定列宽由此与数值文本宽度推导) */
 export const PANEL_CELL_PADDING_X = 6
+
+/** 卡片正文左右内边距(像素):占比条按 body 实测宽度推导可用宽度时须扣掉左右各一份 */
+export const PANEL_CARD_BODY_PADDING_X = 10
 
 /**
  * 表格列宽为「内容自适应 + 富余按比例分配」:下列常量是各列的内容宽度下限(兜底),

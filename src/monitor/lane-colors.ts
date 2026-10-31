@@ -12,7 +12,7 @@
  * 作者:JularDepick
  */
 
-import { LANE_COLOR_STRATEGIES } from '../constants'
+import { LANE_COLOR_STRATEGIES, MAX_LANE_COLOR_POOL_SIZE } from '../constants'
 
 /** 取色方案:`cycle` 循环复用,`midpoint` 自动取间色新增(取值集合由常量定义,避免多处硬编码漂移) */
 export type LaneColorStrategy = (typeof LANE_COLOR_STRATEGIES)[number]
@@ -96,13 +96,15 @@ export function midpointCandidates(pool: readonly string[]): string[] {
  * 选择预备色:
  * 池内成员直接取对应位置的颜色;池外成员按策略处理。
  * `midpoint` 在池外逐次插入中间色(被占用则轮询下一个候选),插入位置在成对的前一色之后,
- * 并把候选起点推进到新增色之后;所有候选都已被占用时退回循环复用,保证取色一定有结果。
+ * 并把候选起点推进到新增色之后;候选都被占用或池已达上限 `maxPool` 时退回循环复用,
+ * 保证取色一定有结果,且池不会随成员数无限增长(上限与配置面一致)。
  */
 export function planLaneColors(
   count: number,
   pool: readonly string[],
   strategy: LaneColorStrategy,
   cursor = 0,
+  maxPool: number = MAX_LANE_COLOR_POOL_SIZE,
 ): LaneColorPlan {
   const colors: string[] = []
   const next = normalizeLaneColorPool(pool, pool, 2)
@@ -115,6 +117,10 @@ export function planLaneColors(
       continue
     }
     if (strategy === 'cycle') {
+      colors.push(next[index % next.length])
+      continue
+    }
+    if (next.length >= maxPool) {
       colors.push(next[index % next.length])
       continue
     }

@@ -3,11 +3,13 @@
  *
  * 经 conversation.view 槽注册浏览器端面板组件,
  * 通过 host webserver 数据端点同源轮询快照并展示。
- * 面板按两个维度各占一张卡:进程维度(dsh 进程树逐进程)与会话维度(按会话归并)。
- * 两张卡的资源占比条形状一致,为三段固定泳道:
+ * 面板按四个维度各占一张卡:本会话维度(当前会话及其派生的子代理会话)、进程维度(dsh 进程树逐进程)、
+ * 会话维度(按会话归并,子代理并成一行合计)与子代理维度(逐个会话独立成行)。
+ * 四张卡的资源占比条形状一致,为三段固定泳道:
  * 左端「其他应用」(与 dsh 无关的系统进程合计)、中段「dsh 及其子进程」(按成员相对占比分段)、
  * 右端「空闲」(整机未被占用);三段宽度固定,占用数值由各段标签给出(占整机百分比,精确到 0.01%),
- * 标签仅在所在段放得下时显示。基准字号取宿主排版 token,颜色只用宿主语义 token 与静态色 token,明暗主题自适应。
+ * 标签仅在所在段放得下时显示。基准字号取宿主排版 token,配色为面板自绘的独立配色(--sm-* 变量,明暗两套),
+ * 只有泳道内名称的白/黑二选一按分段底色对比度判定。
  * 作者:JularDepick
  */
 
@@ -37,6 +39,7 @@ import {
   PANEL_BORDER_STRONG_COLOR,
   PANEL_BOTTOM_PADDING,
   PANEL_CARD_COLOR,
+  PANEL_CARD_BODY_PADDING_X,
   PANEL_CARD_HEAD_COLOR,
   PANEL_CARDS_DOUBLE_MIN_WIDTH,
   PANEL_CELL_PADDING_X,
@@ -221,36 +224,39 @@ function formatDateTime(value: number): string {
   )
 }
 
-/** 字节数按量级自适应单位(KB/MB/GB,两位小数) */
+/**
+ * 字节数按量级自适应单位(KB/MB/GB,两位小数)。
+ * 量级按**四舍五入之后**的值判定,避免 1048575 字节这类贴着边界显示成 1024.00KB;
+ * 确切 0 显示 0 B(真零是已知值,不写成 0.00KB);非有限值给占位文本,不产生 NaN。
+ */
 function formatBytes(bytes: number): string {
-  const kilobytes = bytes / 1024
+  if (!Number.isFinite(bytes) || bytes <= 0) return bytes === 0 ? '0 B' : '--'
+  const round2 = (value: number): number => Math.round(value * 100) / 100
+  const kilobytes = round2(bytes / 1024)
   if (kilobytes < 1024) return `${kilobytes.toFixed(2)}KB`
-  const megabytes = kilobytes / 1024
+  const megabytes = round2(bytes / 1024 / 1024)
   if (megabytes < 1024) return `${megabytes.toFixed(2)}MB`
-  return `${(megabytes / 1024).toFixed(2)}GB`
+  return `${round2(bytes / 1024 / 1024 / 1024).toFixed(2)}GB`
 }
 
-/**
- * 当前生效的泳道预备色(长度等于本轮需要配色的普通成员数):
- * 面板在渲染各卡之前按取色方案算出颜色并写入此处,占比条、表格色块与图例因此同源。
- */
-let activeLaneColors: readonly string[] = DEFAULT_LANE_COLOR_POOL
-
-/** 第 index 个分段的分段配色(超出生效色池长度后循环) */
-function seriesColor(index: number): string {
-  return activeLaneColors[index % activeLaneColors.length]
+/** 第 index 个分段的分段配色(超出生效色池长度后循环;空池回退默认池,保证取色总有结果) */
+function seriesColor(index: number, laneColors: readonly string[]): string {
+  const palette = laneColors.length === 0 ? DEFAULT_LANE_COLOR_POOL : laneColors
+  return palette[index % palette.length]
 }
 
 /**
  * 各分段的最终配色:主进程/宿主取语义蓝、会话卡的子代理合计行取语义紫,
  * 其余成员按出现顺序取系列色——系列色不参与主泳道,主泳道也不占用系列色名额。
+ * 生效色池由调用方显式传入(见渲染处的 laneColors),不用模块级可变状态,
+ * 避免多个面板实例或并发渲染时一处取色被另一处覆盖。
  */
-function groupColors(groups: readonly ShareGroup[], start = 0): { colors: string[]; next: number } {
+function groupColors(groups: readonly ShareGroup[], start = 0, laneColors: readonly string[] = DEFAULT_LANE_COLOR_POOL): { colors: string[]; next: number } {
   let next = start
   const colors = groups.map((group) => {
     if (group.primary === true) return LANE_COLOR_PRIMARY
     if (group.key === SUBAGENT_GROUP_KEY) return LANE_COLOR_SUBAGENT
-    const color = seriesColor(next)
+    const color = seriesColor(next, laneColors)
     next += 1
     return color
   })
@@ -490,7 +496,7 @@ body[data-ds-dark-theme] .sm-root {
 `
 
 /**
- * 内容列:宿主视图区与滚动容器均无内边距(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致;0.2.1-rc.1 至 0.2.1-rc.3 的槽契约与平台模块表已复核一致),
+ * 内容列:宿主视图区与滚动容器均无内边距(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致;0.2.1-rc.1 至 0.2.1-rc.5 的槽契约与平台模块表已复核一致),
  * 间距与滚动兜底须由组件自带。
  * 宽度取 tab 区域可用宽度(仅超宽屏按 PANEL_MAX_WIDTH 收窄),不再对齐宿主对话列宽,
  * 否则在宽 tab 区域内会留下大片左右空白。
@@ -839,7 +845,7 @@ function ShareTrack(props: {
 }): ReactNode {
   const values = props.groups.map((group) => props.pick(group))
   const weights = computeLaneWeights(values)
-  const colors = props.colors ?? groupColors(props.groups).colors
+  const colors = props.colors ?? groupColors(props.groups, 0, DEFAULT_LANE_COLOR_POOL).colors
   const dshTotal = values.reduce((sum, value) => sum + value, 0)
   const othersText = formatPercent(props.others)
   const idleText = formatPercent(props.idle)
@@ -981,12 +987,12 @@ function ShareRow(props: {
 }
 
 /** 占比条图例:三段泳道的含义(中段用系列色渐变表示按成员分段) */
-function ShareLegend(props: { t: PanelTranslate }): ReactNode {
+function ShareLegend(props: { t: PanelTranslate; colors: readonly string[] }): ReactNode {
   const items: { key: string; color: string; label: string }[] = [
     { key: 'others', color: LANE_COLOR_OTHERS, label: props.t('chart.others') },
     {
       key: 'dsh',
-      color: `linear-gradient(90deg, ${PANEL_ACCENT_COLOR} 0 34%, ${seriesColor(0)} 34% 67%, ${seriesColor(1)} 67% 100%)`,
+      color: `linear-gradient(90deg, ${PANEL_ACCENT_COLOR} 0 34%, ${seriesColor(0, props.colors)} 34% 67%, ${seriesColor(1, props.colors)} 67% 100%)`,
       label: props.t('chart.dsh'),
     },
     { key: 'idle', color: LANE_COLOR_IDLE, label: props.t('chart.idle') },
@@ -1057,8 +1063,9 @@ function DimensionCard(props: {
     const element = bodyRef.current
     if (element === null || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
-      // 行内两段:指标名列 + 占比条,一处 gap 10px
-      const next = element.clientWidth - PANEL_CHART_LABEL_WIDTH - 10
+      // 行内两段:指标名列 + 占比条,一处 gap 10px;
+      // clientWidth 含卡片正文左右内边距,须扣掉左右各一份,否则段标签的「放得下」估算偏乐观
+      const next = element.clientWidth - PANEL_CARD_BODY_PADDING_X * 2 - PANEL_CHART_LABEL_WIDTH - 10
       if (next > 0) setWidth(next)
       const table = tableRef.current
       if (table !== null) setTableWidth(table.clientWidth)
@@ -1114,8 +1121,8 @@ function DimensionCard(props: {
       </button>
       {!props.open ? null : (
         <>
-          <div ref={bodyRef} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px' }}>
-            <ShareLegend t={props.t} />
+          <div ref={bodyRef} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: `8px ${PANEL_CARD_BODY_PADDING_X}px` }}>
+            <ShareLegend t={props.t} colors={props.colors ?? DEFAULT_LANE_COLOR_POOL} />
         <ShareRow
           label={props.t('table.column.cpu')}
           groups={props.groups}
@@ -1291,7 +1298,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   useEffect(() => {
     if (!configOpen || typeof window === 'undefined') return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setConfigOpen(false)
+      if (event.key !== 'Escape') return
+      // 配置子页是面板内的模态视图,故该按键在此消费掉,避免宿主自身的 ESC 语义同时响应
+      event.preventDefault()
+      event.stopPropagation()
+      setConfigOpen(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -1356,9 +1367,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     setRetainDraft(null)
   }
 
-  /** 提交颜色输入框:合法则归一化落盘,非法输入不改动原色,提交后清空草稿 */
+  /** 提交颜色输入框:合法且与原值不同才归一化落盘,非法输入不改动原色,提交后清空草稿 */
   const commitLaneColor = (index: number, raw: string): void => {
-    if (normalizeLaneColor(raw) !== undefined) updateLaneColor(index, raw)
+    const normalized = normalizeLaneColor(raw)
+    if (normalized !== null && normalized !== lanePool[index]) updateLaneColor(index, normalized)
     setLaneColorDraft(null)
   }
 
@@ -1370,12 +1382,19 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     setPreference('laneColorPool', normalizeLaneColorPool(next, lanePool, MIN_LANE_COLOR_POOL_SIZE))
   }
 
-  /** 追加一个颜色(取池尾与池首的中间色,使新增色与相邻色协调) */
+  /**
+   * 追加一个颜色:取池尾与池首之间的插值色,使新增色与相邻色协调。
+   * 依次尝试多个插值位置,避免算出的色已在池内而被归一化去重,表现为点击无反应。
+   */
   const addLaneColor = (): void => {
     if (lanePool.length >= MAX_LANE_COLOR_POOL_SIZE) return
     const last = lanePool[lanePool.length - 1] ?? '#3d7ea6'
     const first = lanePool[0] ?? '#12a3b4'
-    setPreference('laneColorPool', [...lanePool, mixLaneColors(last, first)])
+    const candidate = [0.5, 0.25, 0.75, 0.125, 0.375]
+      .map((ratio) => mixLaneColors(last, first, ratio))
+      .find((color) => !lanePool.includes(color))
+    if (candidate === undefined) return
+    setPreference('laneColorPool', [...lanePool, candidate])
   }
 
   /** 移除池内某个颜色:不低于下限时才允许,避免池被删空 */
@@ -1433,8 +1452,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 配置子页:面板内展开的配置视图,由右上角按钮呼起、ESC 或「关闭」收起。
    * 控件一律用宿主官方组件(开关、分段控件、按钮),配色与外观继承当前 profile;
    * 设置行收在 PANEL_SETTINGS_WIDTH 内,避免宽卡片下标签与控件相距过远。
+   * 快照导出行按 allowExport 取舍:快照导出依赖 return 之后声明的处理函数,
+   * 而加载态与数据源不可用态在这两处 return 之前就要渲染本卡片,
+   * 故那两个分支传 false,不渲染导出行(没有快照也无内容可导出)。
    */
-  const configCard = (
+  const renderConfigCard = (allowExport: boolean) => (
     <div
       ref={settingsRegionRef}
       id={PANEL_SETTINGS_REGION_ID}
@@ -1591,12 +1613,14 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
             </span>
           </div>
         </div>
-        <div style={settingsRowStyle}>
-          <span style={settingsLabelStyle}>{t('config.export')}</span>
-          <Button variant="ghost" size="sm" onClick={() => { void copySnapshot() }}>
-            {exportState === 'copied' ? t('config.exported') : exportState === 'failed' ? t('config.exportFailed') : t('config.export')}
-          </Button>
-        </div>
+        {allowExport ? (
+          <div style={settingsRowStyle}>
+            <span style={settingsLabelStyle}>{t('config.export')}</span>
+            <Button variant="ghost" size="sm" onClick={() => { void copySnapshot() }}>
+              {exportState === 'copied' ? t('config.exported') : exportState === 'failed' ? t('config.exportFailed') : t('config.export')}
+            </Button>
+          </div>
+        ) : null}
         <span style={{ color: PANEL_TEXT_TERTIARY_COLOR, paddingTop: 8, ...PANEL_TYPOGRAPHY.caption }}>{t('config.hint')}</span>
       </div>
     </div>
@@ -1613,7 +1637,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     return (
       <div className="sm-root sm-column" style={columnStyle}>
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{settingsAnchor}</div>
-        {configOpen ? configCard : null}
+        {configOpen ? renderConfigCard(false) : null}
         <span role="status" aria-live="polite" style={{ color: PANEL_TEXT_TERTIARY_COLOR, ...PANEL_TYPOGRAPHY.base }}>
           {t('loading.sampling')}
         </span>
@@ -1636,7 +1660,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           </span>
           {settingsAnchor}
         </div>
-        {configOpen ? configCard : null}
+        {configOpen ? renderConfigCard(false) : null}
         <style>{panelCss}</style>
       </div>
     )
@@ -1812,7 +1836,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     laneStrategy,
     preferences.laneColorCursor ?? 0,
   )
-  activeLaneColors = lanePlan.colors.length === 0 ? lanePool : lanePlan.colors
+  const laneColors: readonly string[] = lanePlan.colors.length === 0 ? lanePool : lanePlan.colors
   if (laneStrategy === 'midpoint' && lanePlan.pool.length !== lanePool.length) {
     lanePoolPendingRef.current = { pool: lanePlan.pool, cursor: lanePlan.cursor }
   }
@@ -1820,10 +1844,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 四张卡的成员配色按顺序串行分配(主进程与宿主、会话卡的子代理合计行不占名额):
    * 逐卡从上一卡终点继续取色, 卡间不撞色, 消耗量也与取色方案算出的容量一致。
    */
-  const currentSessionPlan = groupColors(currentSessionGroups, 0)
-  const processPlan = groupColors(processGroups, currentSessionPlan.next)
-  const sessionPlan = groupColors(sessionGroups, processPlan.next)
-  const subagentPlan = groupColors(subagentGroups, sessionPlan.next)
+  const currentSessionPlan = groupColors(currentSessionGroups, 0, laneColors)
+  const processPlan = groupColors(processGroups, currentSessionPlan.next, laneColors)
+  const sessionPlan = groupColors(sessionGroups, processPlan.next, laneColors)
+  const subagentPlan = groupColors(subagentGroups, sessionPlan.next, laneColors)
   const currentSessionColors = currentSessionPlan.colors
   const processColors = processPlan.colors
   const sessionColors = sessionPlan.colors
@@ -1845,7 +1869,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     }
     setRetentionTick((tick) => tick + 1)
   }
-  /** 占比条两端泳道的整机口径数值(两张卡一致,只有中段分组不同) */
+  /** 占比条两端泳道的整机口径数值(四张卡一致,只有中段分组不同) */
   const machine: MachineShare = {
     othersCpu: scaleCpuPercent(snapshot.totals.othersCpuPercent, cpuFactor),
     idleCpu: scaleCpuPercent(snapshot.totals.idleCpuPercent, cpuFactor),
@@ -1917,7 +1941,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 配额存在时百分比一律按配额口径计算,故这里把配额与可见总量并列给出,读数才可解释。
    */
   const quotaParts: string[] = []
-  if (snapshot.cpuQuotaCores !== null) quotaParts.push(`${snapshot.cpuQuotaCores} ${t('summary.cores')}`)
+  if (snapshot.cpuQuotaCores !== null) quotaParts.push(t('summary.cores', { count: snapshot.cpuQuotaCores }))
   if (snapshot.memoryLimitBytes !== null) quotaParts.push(formatBytes(snapshot.memoryLimitBytes))
 
   const summary: { key: 'summary.sampledAt' | 'summary.platform' | 'summary.pollInterval' | 'summary.cpuCount' | 'summary.totalMemory' | 'summary.rootPid' | 'summary.others' | 'summary.quota' | 'summary.unreadable'; value: string }[] = [
@@ -2172,7 +2196,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         ))}
       </div>
       {/* 配置子页展开时替换维度卡;关闭时还原为响应式栅格 */}
-      {configOpen ? configCard : null}
+      {configOpen ? renderConfigCard(true) : null}
       <div
         ref={cardsRef}
         className="sm-cards"
@@ -2200,7 +2224,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           const label = rowLabel(group)
           return (
-            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
+            <tr key={`${group.key}${sampled ? '' : '~'}${group.label}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, currentSessionColors[index], label, sampled)}
               {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
               {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
@@ -2244,7 +2268,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           const sessionLabel = sample === undefined ? '--' : sessionLabelOf(sample)
           const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           return (
-            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
+            <tr key={`${group.key}${sampled ? '' : '~'}${group.label}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, processColors[index], group.label, sampled)}
               {columnVisible('pid') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.pid ?? group.key}</td> : null}
               {columnVisible('parent') ? <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{sample?.handle.parentPid ?? (sampled ? '' : '--')}</td> : null}
@@ -2281,7 +2305,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           const label = rowLabel(group)
           const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           return (
-            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
+            <tr key={`${group.key}${sampled ? '' : '~'}${group.label}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, sessionColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent >= cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
@@ -2313,7 +2337,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
           const label = rowLabel(group)
           const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           return (
-            <tr key={`${group.key}${sampled ? '' : '~'}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
+            <tr key={`${group.key}${sampled ? '' : '~'}${group.label}`} style={{ borderBottom: last ? 'none' : `1px solid ${PANEL_BORDER_COLOR}` }}>
               {nameCell(group, subagentColors[index], label, sampled)}
               <td style={{ ...dataCellStyle, fontVariantNumeric: 'tabular-nums' }}>{group.count}</td>
               {valueCell(formatPercent(group.cpuPercent), group.cpuPercent >= cpuWarnThreshold, t('aria.usage.cpu', { name: label, value: formatPercent(group.cpuPercent) }))}
