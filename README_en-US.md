@@ -2,18 +2,17 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.3.0-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.0)
+[![Version](https://img.shields.io/badge/Version-0.3.1-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.1)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
-[English]
-| [简体中文](./README.md)
+English | [简体中文](./README.md)
 
 </div>
 
 A plugin for dsh: monitor the resource utilization of dsh processes and their spawned children, and report the results in panel charts
 
-Supports dsh 0.2.1-rc.1, 0.2.1-rc.2 and 0.2.1-rc.3
+Supports dsh 0.2.1-rc.1 through 0.2.1-rc.5
 
 ---
 
@@ -32,7 +31,7 @@ Supports dsh 0.2.1-rc.1, 0.2.1-rc.2 and 0.2.1-rc.3
 
 ## Installation
 
-This release supports dsh 0.2.1-rc.1, 0.2.1-rc.2 and 0.2.1-rc.3: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and any dsh version outside that set (including 0.2.0-rc.2 and earlier) is refused at installation and at startup
+This release supports dsh 0.2.1-rc.1 through 0.2.1-rc.5: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and any dsh version outside that set (including 0.2.0-rc.2 and earlier) is refused at installation and at startup
 
 This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical
 
@@ -47,7 +46,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 When distributing a tarball:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.0.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.1.tgz
 ```
 
 
@@ -59,7 +58,7 @@ Each card carries the totals of its dimension, a resource share bar of three fix
 
 Detail tables can be sorted by CPU, memory or name, and the optional columns (PID, parent, session, memory percentage) can be hidden; a process or session that was sampled before does not disappear as soon as a later round misses it, but stays with zeroed values and is removed automatically only after several consecutive rounds without a sample (10 by default, adjustable in the plugin config and the panel settings sub-page), and any row can also be removed manually (it comes back once sampled again)
 
-The "Settings" button at the top right of the panel opens an in-panel settings sub-page to toggle in-lane names, switch the CPU scope (whole machine / per core), the view columns (single / two-column), the table sort (default / CPU / memory / name) and the visible columns (per-column toggles), adjust the row retention rounds, switch the lane color strategy (recycle existing / auto-insert midpoints) and add, edit or remove lane pool colors, and to copy the current snapshot as text; settings and collapse states are kept in browser-side local preferences; card folding and the settings sub-page are both keyboard operable (ESC closes the sub-page)
+The "Settings" button at the top right of the panel opens an in-panel settings sub-page to toggle in-lane names, switch the CPU scope (whole machine / single core), the view columns (single / two-column), the table sort (default / CPU / memory / name) and the visible columns (per-column toggles), adjust the row retention rounds, switch the lane color strategy (recycle existing / auto-insert midpoints) and add, edit or remove lane pool colors, and to copy the current snapshot as text; settings and collapse states are kept in browser-side local preferences; card folding and the settings sub-page are both keyboard operable (ESC closes the sub-page)
 
 Process handles that need to be monitored are reported by the Agent through the reporting tool during a session
 
@@ -83,7 +82,7 @@ dsh-system-monitor-plugin/
 ├── tsconfig.json       # type-check configuration
 ├── tsdown.config.ts    # build configuration
 ├── version.index.md    # version index
-├── docs/               # project docs (official plugin dev docs, tech specs, tag and release spec)
+├── docs/               # project docs (official plugin dev docs, dsh web tab guide, tech specs, tag and release spec)
 ├── scripts/            # helper scripts (syntax check, build pre/post steps)
 └── src/                # project source (entry, config, constants, client, monitor, translation)
 ```

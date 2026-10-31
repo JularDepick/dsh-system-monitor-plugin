@@ -9,7 +9,7 @@ dist/
 release/
 *.tgz
 
-# 版本文档(守则第 11 章占用的忽略规则)
+# 版本文档(守则第 15 章占用的忽略规则)
 v*-*.md
 
 # Agent Runtime

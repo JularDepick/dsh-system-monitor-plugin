@@ -2,18 +2,17 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.3.0-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.0)
+[![Version](https://img.shields.io/badge/Version-0.3.1-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.1)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
-[English](./README_en-US.md)
-| [简体中文]
+[English](./README_en-US.md) | 简体中文
 
 </div>
 
 面向 dsh 的插件: 监控 dsh 进程及其派生子进程的资源占用,并以面板图表向用户报告结果
 
-支持 dsh 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3
+支持 dsh 0.2.1-rc.1 至 0.2.1-rc.5
 
 ---
 
@@ -32,7 +31,7 @@
 
 ## 安装
 
-本版本同时适配 dsh 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3:dsh 自 0.2.1-rc.1 起在 manifest 声明了 `engines.dsh` 时由该范围单独决定(此时 peer 不参与判定),0.2.0-rc.2 只校验 dsh 前缀 `peerDependencies`;本插件两处声明同一组受支持版本,支持范围以外的 dsh 版本(含 0.2.0-rc.2 及更早)在安装与启动时都会被拒绝
+本版本同时适配 dsh 0.2.1-rc.1 至 0.2.1-rc.5:dsh 自 0.2.1-rc.1 起在 manifest 声明了 `engines.dsh` 时由该范围单独决定(此时 peer 不参与判定),0.2.0-rc.2 只校验 dsh 前缀 `peerDependencies`;本插件两处声明同一组受支持版本,支持范围以外的 dsh 版本(含 0.2.0-rc.2 及更早)在安装与启动时都会被拒绝
 
 本插件适用于 dsh 的 `web` 与 `desktop` 两个 profile,两者用同一份插件包安装;差异只在界面宿主环境(Web UI 会话区域标签页 / 桌面端同一槽位),采集机制与面板行为一致
 
@@ -47,7 +46,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 使用 tarball 分发时:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.0.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.1.tgz
 ```
 
 
@@ -83,7 +82,7 @@ dsh-system-monitor-plugin/
 ├── tsconfig.json       # 类型检查配置
 ├── tsdown.config.ts    # 构建配置
 ├── version.index.md    # 版本号索引
-├── docs/               # 项目文档(官方插件开发文档, 技术规范, Tag 与 Release 规范)
+├── docs/               # 项目文档(官方插件开发文档, dsh web tab 开发经验, 技术规范, Tag 与 Release 规范)
 ├── scripts/            # 辅助脚本(语法验证, 构建前后处理)
 └── src/                # 项目源码(插件入口, 配置, 常量, 客户端, 监控, 翻译)
 ```
