@@ -29,4 +29,9 @@ for (const entry of fs.readdirSync(rootDir)) {
   moved += 1
   console.log(`postpack: ${entry} -> release/`)
 }
-if (moved === 0) console.log(`postpack: no ${expected} in root to move`)
+if (moved === 0) {
+  // 归位失败属打包链路故障(常见原因:版本号漏改导致包名与预期不一致),
+  // 必须以非 0 退出让打包失败可见,否则 release/ 空着也算「成功」
+  console.error(`postpack: 未找到本次产物 ${expected}, release/ 未更新`)
+  process.exitCode = 1
+}

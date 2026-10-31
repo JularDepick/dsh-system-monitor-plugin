@@ -11,18 +11,18 @@
 import { defineConfig } from 'tsdown'
 
 /** 宿主冻结的平台模块表(客户端 bundle 一律外部化,运行时由宿主提供);
- *  清单取 dsh 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3 发布包的公共子集,故三版通用
- *  (0.2.1-rc.1 起另新增 zod 与 @tanstack/react-virtual,本插件不引入,不列入) */
+ *  清单取 dsh 0.2.1-rc.1 至 0.2.1-rc.5 发布包的公共子集,故五版通用
+ *  (0.2.1-rc.4 与 rc.5 的前端产物与 rc.3 逐一哈希相同,平台模块表逐项一致;
+ *  0.2.1-rc.1 起另新增 zod 与 @tanstack/react-virtual,本插件不引入,不列入) */
+/**
+ * 只列客户端产物真正 value-import 的包:产物当前只产生 react、react/jsx-runtime
+ * 与 @deepseek-ai/dsh-client-ui-primitives 三个 require,
+ * 多列未引用的 seed 词不会改变产物,但会让清单与规范(只列真实 value-import)不一致
+ */
 const PLATFORM_EXTERNALS = [
   'react',
   'react/jsx-runtime',
-  'react-dom',
-  'react-dom/client',
-  '@deepseek-ai/cordis',
-  '@deepseek-ai/dsh-client-store',
-  '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
 export default defineConfig([
@@ -41,7 +41,9 @@ export default defineConfig([
     dts: false,
     outputOptions: { entryFileNames: 'client.js' },
     deps: { neverBundle: PLATFORM_EXTERNALS },
-    banner: 'var module = { exports: {} }; var exports = module.exports;\nwindow.__ModuleLoader__.load({ id: "dsh-system-monitor-plugin", factory: (require) => {',
+    // CJS 前奏必须落在 factory 体内:放在脚本顶层会让 var 声明落到页面全局,
+    // 把 window.module / window.exports 换成本插件的导出对象,并依赖宿主同步执行工厂
+    banner: 'window.__ModuleLoader__.load({ id: "dsh-system-monitor-plugin", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
     footer: 'return module.exports; } });',
   },
 ])
