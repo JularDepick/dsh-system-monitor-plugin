@@ -161,7 +161,9 @@ class GetProcessQuery implements ProcessQuery {
     const script = [
       "$ErrorActionPreference = 'Stop'",
       '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-      "Get-Process | Select-Object @{n='ProcessId';e={$_.Id}}, @{n='ParentProcessId';e={$null}}, Name, @{n='cpu';e={if ($null -eq $_.CPU) { 0 } else { $_.CPU }}}, @{n='WorkingSetSize';e={if ($null -eq $_.WorkingSet64) { 0 } else { $_.WorkingSet64 }}} | ConvertTo-Json -Compress",
+      // cpu 保留原始的 $null(不要折成 0): 折成 0 会让解析侧当成「读到 0」而记住基准,
+      // 下一轮读到真实累计值就把整段生命周期算进一个窗口,面板出现一次极大峰值
+      "Get-Process | Select-Object @{n='ProcessId';e={$_.Id}}, @{n='ParentProcessId';e={$null}}, Name, @{n='cpu';e={$_.CPU}}, @{n='WorkingSetSize';e={if ($null -eq $_.WorkingSet64) { 0 } else { $_.WorkingSet64 }}} | ConvertTo-Json -Compress",
     ].join('\n')
     const { text, pid } = await runPowershell(script)
     return dropSampler(parseRecords(text), pid)
@@ -449,14 +451,16 @@ export class UnixPsQuery implements ProcessQuery {
   }
 }
 
-/** 类 Unix 降级查询:ps 去父子关系与累计 CPU 时间(父进程置空、CPU 时间置零,由回退链标注降级) */
+/** 类 Unix 降级查询:ps 去父子关系与累计 CPU 时间(父进程置空、CPU 时间不可读,由回退链标注降级) */
 export class UnixPsSimpleQuery implements ProcessQuery {
   /** 独立使用时即降级来源 */
   readonly degraded = true
 
   async query(): Promise<ProcessRecord[]> {
     const { text, pid } = await runPs(['-axo', 'pid=,rss=,comm='])
-    return dropSampler(parsePsRecords(text, ['pid', 'rss']), pid)
+    // 该命令链拿不到累计 CPU 时间:整批标为不可读,采集器因此不会为它们保留基准,
+    // 回到首选链时也不会把降级期间的累计值当成一个窗口的增量(否则出现一次极大 CPU 峰值)
+    return dropSampler(parsePsRecords(text, ['pid', 'rss']), pid).map((record) => ({ ...record, cpuUnreadable: true }))
   }
 }
 

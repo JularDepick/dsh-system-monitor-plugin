@@ -18,6 +18,13 @@ fs.mkdirSync(releaseDir, { recursive: true })
 const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'))
 const expected = `${pkg.name}-${pkg.version}.tgz`
 
+// npm/pnpm publish 的 tarball 生成在临时目录而不是包根:此时不归位,也不视为失败,
+// 否则发布流程会被本脚本的退出码打断
+if (process.env.npm_command === 'publish') {
+  console.log('postpack: publish 由包管理器自行打包,跳过 release/ 归位')
+  process.exit(0)
+}
+
 let moved = 0
 for (const entry of fs.readdirSync(rootDir)) {
   if (!entry.endsWith('.tgz')) continue

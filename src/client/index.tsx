@@ -638,7 +638,9 @@ function contrastTextColor(token: string): string {
   }
   const luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
   const whiteContrast = 1.05 / (luminance + 0.05)
-  return whiteContrast >= PANEL_SHARE_NAME_MIN_CONTRAST ? '#ffffff' : '#111111'
+  // 黑字回退取纯黑:阈值 4.5 下白色已覆盖 L 不大于 0.1833 的底色,纯黑覆盖 L 不小于 0.175 的底色,
+  // 两段并集覆盖全部底色;若回退用 #111111(亮度 0.0056),中明度底上白与黑都达不到 4.5(如 #3d7ea6 黑字仅 4.26)
+  return whiteContrast >= PANEL_SHARE_NAME_MIN_CONTRAST ? '#ffffff' : '#000000'
 }
 
 /** 配置子页:设置行(标签在左、控件在右,行间以宿主分隔线分栏) */
@@ -1299,13 +1301,15 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     if (!configOpen || typeof window === 'undefined') return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
-      // 配置子页是面板内的模态视图,故该按键在此消费掉,避免宿主自身的 ESC 语义同时响应
+      // 配置子页是面板内的模态视图,故该按键在此消费掉,避免宿主自身的 ESC 语义同时响应。
+      // 必须挂在捕获阶段:宿主把按键仲裁放在 document 与更早注册的 window 监听上,
+      // 冒泡阶段再阻止已经来不及(先到者已读过 defaultPrevented 并做出判定)。
       event.preventDefault()
       event.stopPropagation()
       setConfigOpen(false)
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [configOpen])
 
   /** 是否在泳道内显示名称:本地偏好优先,其次插件配置,最后默认值 */
@@ -1340,12 +1344,16 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 声明位置需早于使用它的提交函数,故与其它偏好派生值放在一起。
    */
   const retainRounds = preferences.retainRounds ?? snapshot?.panelOptions?.retainRounds ?? DEFAULT_RETAIN_ROUNDS
-  /** 泳道预备颜色池(本地偏好优先,其次插件配置,最后内置默认值;数量不足时自动补足) */
+  /**
+   * 泳道预备颜色池(本地偏好优先,其次插件配置,最后内置默认值;数量不足时自动补足)。
+   * 本地偏好可能被写到上限之外,故读取时一并按 `MAX_LANE_COLOR_POOL_SIZE` 收敛,
+   * 否则设置页会显示超量输入框且加色按钮永久禁用。
+   */
   const lanePool = normalizeLaneColorPool(
     preferences.laneColorPool ?? snapshot?.panelOptions?.laneColorPool,
     DEFAULT_LANE_COLOR_POOL,
     MIN_LANE_COLOR_POOL_SIZE,
-  )
+  ).slice(0, MAX_LANE_COLOR_POOL_SIZE)
   /** 泳道颜色取色方案:池内颜色不够用时循环复用或自动取间色新增 */
   const laneStrategy = normalizeLaneColorStrategy(
     preferences.laneColorStrategy ?? snapshot?.panelOptions?.laneColorStrategy,
@@ -1390,7 +1398,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     if (lanePool.length >= MAX_LANE_COLOR_POOL_SIZE) return
     const last = lanePool[lanePool.length - 1] ?? '#3d7ea6'
     const first = lanePool[0] ?? '#12a3b4'
-    const candidate = [0.5, 0.25, 0.75, 0.125, 0.375]
+    const candidate = [0.5, 0.25, 0.75, 0.125, 0.375, 0.0625, 0.1875, 0.3125, 0.4375, 0.5625, 0.6875, 0.8125, 0.9375]
       .map((ratio) => mixLaneColors(last, first, ratio))
       .find((color) => !lanePool.includes(color))
     if (candidate === undefined) return

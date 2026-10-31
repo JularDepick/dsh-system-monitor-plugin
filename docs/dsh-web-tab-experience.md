@@ -63,7 +63,7 @@ ctx.slots.inject('conversation.view', () => ctx.slots.register({
 | external | 宿主冻结模块表 `PLATFORM_MODULES`(见下)为基线,`dsh.client.external` 只补充基线之外的精确请求(tsdown 用 `deps.neverBundle` 表达);纯类型 import 被擦除,不产生请求;组合阶段会拒绝畸形请求,缺失提供方,自请求与同步请求环(0.2.0-rc.2 发布包语义) |
 | noExternal | 其余全部内联(`deps.alwaysBundle`:未被请求的 specifier 一律打进 bundle;官方另有 INLINE_SAFE wire 层内联约定) |
 | banner / footer | `window.__ModuleLoader__.load({ id: "<包名>", factory: (require) => {` / `return module.exports; } });`(tsdown 会格式化多行,断言勿用单行匹配) |
-| intro | 官方预设写 `var module = { exports: {} }; var exports = module.exports;`;tsdown 0.22 无 `intro` 选项(静默忽略),必须并入 banner,且**要接在 `factory: (require) => {` 之后、factory 体内**:放在脚本顶层会让 `var` 声明落到页面全局,把 `window.module` / `window.exports` 换成本插件的导出对象,并依赖宿主同步执行工厂(本项目做法) |
+| intro | 官方预设写 `var module = { exports: {} }; var exports = module.exports;`;tsdown 0.22 无 `intro` 选项(静默忽略),必须并入 banner,且**要接在 `factory: (require) => {` 之后,即 factory 体内**:放在脚本顶层会让 `var` 声明落到页面全局,把 `window.module` / `window.exports` 换成本插件的导出对象,并依赖宿主同步执行工厂(本项目做法) |
 | dts | false(类型由 tsc 走 lib/types,别让 dts 包装 banner) |
 | define | `process.env.NODE_ENV` 与 `import.meta.env.MODE`(zustand 等内联库需要) |
 | CSS Modules | 自定义插件:lightningcss 编译 `.module.css` 为 hashed classMap + 注入 `<style data-plugin>`(tsdown 自带 css 管线不处理,需虚拟 id 包装,后缀不能是 `.css`) |
@@ -77,7 +77,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 @deepseek-ai/dsh-client-ui-dockkit
 ```
 
-> 0.2.1-rc.1 相比 0.2.0-rc.2 新增 `zod` 与 `@tanstack/react-virtual`(0.2.1-rc.2 至 0.2.1-rc.5 该表均与 0.2.1-rc.1 一致);0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须是该表的子集(只列本插件真正 value-import 的包),多余外部化会在浏览器端解析失败,写成子集才能在 0.2.1-rc.1,0.2.1-rc.2 与 0.2.1-rc.3 上通用;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`)
+> 0.2.1-rc.1 相比 0.2.0-rc.2 新增 `zod` 与 `@tanstack/react-virtual`(0.2.1-rc.2 至 0.2.1-rc.5 该表均与 0.2.1-rc.1 一致);0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须是该表的子集(只列本插件真正 value-import 的包),多余外部化会在浏览器端解析失败,写成子集才能在 0.2.1-rc.1 至 0.2.1-rc.5 上通用;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`)
 
 ### 2. 跨插件协作纪律(构建期 purity 门强制)
 

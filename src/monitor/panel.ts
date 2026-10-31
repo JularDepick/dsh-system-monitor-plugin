@@ -23,29 +23,37 @@ export class MonitorPanel {
     private readonly options: () => PanelOptions,
   ) {}
 
-  /** 是否已挂载数据路由(宿主重复广播 internal/service 时不重复注册) */
-  private attached = false
+  /**
+   * 当前已挂载的数据路由:记下挂到哪个 webServer 实例,
+   * 宿主热重启 webServer(旧实例 dispose、新实例 provide)时据此重新挂载;
+   * 旧实现只记「是否挂过」,实例更替后路由随旧服务消失而不再重挂,端点会一直 404。
+   */
+  private route: { server: unknown; dispose: (() => void) | null } | null = null
 
-  /** 注册面板数据路由(webServer 缺失时静默跳过;重复调用只挂一次) */
+  /** 注册面板数据路由(webServer 缺失时静默跳过;同一实例重复调用只挂一次) */
   attach(ctx: Context): void {
-    if (this.attached) return
     const webServer = ctx.get('webServer')
     if (!webServer) return
-    this.attached = true
-    ctx.effect(() => {
-      const dispose = webServer.register({
-        kind: 'exact',
-        path: MONITOR_DATA_PATH,
-        handler: (_req: IncomingMessage, res: ServerResponse) => {
-          // 客户端提前断开时写响应会抛错,不得变成未处理的 Promise 拒绝
-          void this.respond(res).catch(() => {})
-        },
-      })
-      return () => {
-        this.attached = false
-        if (typeof dispose === 'function') dispose()
-      }
+    if (this.route !== null && this.route.server === webServer) return
+    // 实例更替,或上一次 register 抛错留下了无效记录:先摘掉旧路由再挂
+    this.detach()
+    this.route = { server: webServer, dispose: null }
+    const dispose = webServer.register({
+      kind: 'exact',
+      path: MONITOR_DATA_PATH,
+      handler: (_req: IncomingMessage, res: ServerResponse) => {
+        // 客户端提前断开时写响应会抛错,不得变成未处理的 Promise 拒绝
+        void this.respond(res).catch(() => {})
+      },
     })
+    this.route = { server: webServer, dispose: typeof dispose === 'function' ? dispose : null }
+  }
+
+  /** 摘掉当前数据路由(插件卸载或 webServer 实例更替时调用) */
+  detach(): void {
+    const route = this.route
+    this.route = null
+    if (route !== null && route.dispose !== null) route.dispose()
   }
 
   /**
@@ -90,12 +98,13 @@ export class MonitorPanel {
       ...(placeholderError === null ? {} : { error: placeholderError }),
     }
     // 展示选项随每次响应下发:设置页改动插件配置后,面板下一次轮询即按新选项渲染
-    const body = JSON.stringify({ ...payload, panelOptions: this.options() })
     try {
+      // 展示选项与序列化也放进 try:它们抛错时同样不能把请求悬在那里
+      const body = JSON.stringify({ ...payload, panelOptions: this.options() })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(body)
     } catch {
-      // 响应已关闭(客户端断开):丢弃本次结果,由下一次轮询重新取数
+      // 响应已关闭(客户端断开)或序列化失败:丢弃本次结果,由下一次轮询重新取数
     }
   }
 }

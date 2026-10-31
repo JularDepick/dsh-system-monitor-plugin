@@ -24,6 +24,8 @@ let removed = 0
 for (const entry of fs.readdirSync(releaseDir)) {
   if (entry === expected) continue
   if (!entry.startsWith(prefix) || !entry.endsWith('.tgz')) continue
+  // 前缀后必须是版本号段,避免误删同前缀的其它产物(如手工放置的同名说明包)
+  if (!/^\d/.test(entry.slice(prefix.length))) continue
   fs.rmSync(path.join(releaseDir, entry), { force: true })
   removed += 1
   console.log(`clean-release: removed ${entry}`)

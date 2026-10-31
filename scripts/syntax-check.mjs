@@ -40,7 +40,8 @@ function readUtf8(relative) {
 }
 
 const targets = []
-for (const dir of ['src', 'scripts', '.agents']) {
+// 只扫项目源码与脚本目录: .agents 是本地草稿目录(已被 git 忽略),其中的临时脚本不影响项目产物
+for (const dir of ['src', 'scripts']) {
   const full = join(root, dir)
   if (existsSync(full)) targets.push(...walk(full))
 }
@@ -97,7 +98,8 @@ if (iniNames.length === 0) failures.push('src/translation  未发现任何 .ini'
 
 const packVersion = manifests['package.json']?.version
 const expectedFor = typeof packVersion === 'string' ? 'v' + packVersion : null
-const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/
+// 英文侧禁用字符集: 中日韩文字, 以及全角标点区(、。「」 与 ，：；（） 等)
+const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/
 
 function parseIni(name) {
   const text = readFileSync(join(iniDir, name), 'utf8')
@@ -151,10 +153,9 @@ for (const name of iniNames) {
     failures.push(name + '  [meta] endtime 不符合 yyyy-MM-dd HH:mm:ss+HH:mm')
   }
   if (ini.entries.size === 0) failures.push(name + '  [translation] 无词条')
-  if (lang.startsWith('en')) {
-    for (const [key, value] of ini.entries) {
-      if (CJK.test(value)) failures.push(name + '  ' + key + ' 含中日韩字符(英文文件不应出现)')
-    }
+  for (const [key, value] of ini.entries) {
+    if (value.length === 0) failures.push(name + '  ' + key + ' 取值为空')
+    if (lang.startsWith('en') && CJK.test(value)) failures.push(name + '  ' + key + ' 含中日韩或全角字符(英文文件不应出现)')
   }
 }
 
@@ -175,7 +176,7 @@ if (baseIni !== undefined) {
   }
 }
 
-function compareTranslations(label, expected, actual) {
+function compareTranslations(label, expected, actual, options = {}) {
   for (const key of expected.keys()) if (!actual.has(key)) failures.push(label + '  缺少词条: ' + key)
   for (const key of actual.keys()) if (!expected.has(key)) failures.push(label + '  多出词条: ' + key)
   for (const [key, value] of expected) {
@@ -183,6 +184,10 @@ function compareTranslations(label, expected, actual) {
     if (other === undefined) continue
     if (placeholders(value) !== placeholders(other)) {
       failures.push(key + '  占位符不一致(' + label + '): [' + placeholders(value) + '] vs [' + placeholders(other) + ']')
+    }
+    // 同语言的两份数据(ini 与字典)必须逐字相同: 只比键集与占位符会漏掉取值漂移
+    if (options.sameText === true && value !== other) {
+      failures.push(key + '  取值不一致(' + label + '): [' + value + '] vs [' + other + ']')
     }
   }
 }
@@ -205,6 +210,10 @@ function compareTranslations(label, expected, actual) {
         return map
       }
       const dicts = { 'zh-CN': dictOf(source.slice(zhStart, enStart)), 'en-US': dictOf(source.slice(enStart)) }
+      for (const [key, value] of dicts['en-US']) {
+        if (value.length === 0) failures.push('i18n.ts(en-US)  ' + key + ' 取值为空')
+        if (CJK.test(value)) failures.push('i18n.ts(en-US)  ' + key + ' 含中日韩或全角字符')
+      }
       compareTranslations('i18n.ts(zh-CN) vs en-US', dicts['zh-CN'], dicts['en-US'])
       for (const [lang, dict] of Object.entries(dicts)) {
         const ini = iniByLang.get(lang)
@@ -212,12 +221,16 @@ function compareTranslations(label, expected, actual) {
           failures.push('src/translation  缺少 ' + lang + '.ini')
           continue
         }
-        compareTranslations('i18n.ts(' + lang + ') vs ' + lang + '.ini', ini.entries, dict)
+        compareTranslations('i18n.ts(' + lang + ') vs ' + lang + '.ini', ini.entries, dict, { sameText: true })
       }
       // 界面实际用到的字面键必须有词条(动态键经映射表,另行人工核对)
       const client = readUtf8('src/client/index.tsx')
       if (client !== null) {
-        const used = new Set([...client.matchAll(/\bt\(\s*'([^']+)'/g)].map((m) => m[1]))
+        const used = new Set([
+          ...[...client.matchAll(/\bt\(\s*'([^']+)'/g)].map((m) => m[1]),
+          // 标签 thunk 走 translate('...') 取词条,同样要扫
+          ...[...client.matchAll(/\btranslate\(\s*'([^']+)'/g)].map((m) => m[1]),
+        ])
         for (const key of used) {
           if (!dicts['zh-CN'].has(key)) failures.push('index.tsx 用到未定义的键: ' + key)
         }

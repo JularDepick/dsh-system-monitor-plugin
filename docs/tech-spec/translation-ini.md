@@ -36,4 +36,4 @@
 
 - 面板文案由客户端字典(`src/client/i18n.ts`)提供,经宿主 locale 服务的命名空间注册,随宿主界面语言切换
 - `src/translation/` 下的 INI 文件**不参与运行时加载**,只作键集参照与新增语言的翻译预设随包分发
-- 字典与 INI 的键集与占位符需保持双向一致;`scripts/syntax-check.mjs`(经 `pnpm run check` 触发)会做四路比对: 目录扫描发现全部 ini、`[meta]` 四键与版本号/语言/时间格式、重复键、zh 与 en 之间、两套字典与各自 ini 之间、`.example` 与 `zh-CN.ini` 逐字节一致,以及英文文件不得含中日韩字符
+- 字典与 INI 的键集与占位符需保持双向一致;`scripts/syntax-check.mjs`(经 `pnpm run check` 触发)会做四路比对: 目录扫描发现全部 ini,`[meta]` 四键与版本号/语言/时间格式,重复键,zh 与 en 之间,两套字典与各自 ini 之间(含取值逐字相同),`.example` 与 `zh-CN.ini` 逐字节一致,英文文件不得含中日韩或全角字符,以及空取值与界面用到的键

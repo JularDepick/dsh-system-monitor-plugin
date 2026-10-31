@@ -11,7 +11,7 @@
 import { basename } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config } from '../config'
-import { MAX_POLL_INTERVAL, MIN_POLL_INTERVAL } from '../constants'
+import { DEFAULT_POLL_INTERVAL, MAX_POLL_INTERVAL, MIN_POLL_INTERVAL } from '../constants'
 import { OwnerResolver, readProcessEnviron } from './attribution'
 import type { SessionInfo } from './attribution'
 import { ProcessCollector, createPlatformQuery } from './collector'
@@ -140,7 +140,9 @@ export function setup(ctx: Context, config: Config): void {
   const resolver = new OwnerResolver(readProcessEnviron, process.pid)
   // 轮询间隔在进入采集器前收敛到合规区间:配置 schema 已限界,这里再兜底一次,
   // 避免绕过 schema 的调用方(或超 32 位上限的定时器延时被压成 1 毫秒)把轮询变成查询进程风暴
-  const pollInterval = Math.min(MAX_POLL_INTERVAL, Math.max(MIN_POLL_INTERVAL, Math.round(config.pollInterval)))
+  // NaN 会穿透 Math.round/min/max(NaN 参与比较恒为假),故先判有限性再收敛
+  const requestedInterval = Number.isFinite(config.pollInterval) ? Math.round(config.pollInterval) : DEFAULT_POLL_INTERVAL
+  const pollInterval = Math.min(MAX_POLL_INTERVAL, Math.max(MIN_POLL_INTERVAL, requestedInterval))
   const collector = new ProcessCollector(
     pollInterval,
     process.pid,
@@ -193,11 +195,14 @@ export function setup(ctx: Context, config: Config): void {
     laneColorPool: [...config.laneColorPool],
     laneColorStrategy: config.laneColorStrategy,
   }))
-  const mount = (): void => panel.attach(ctx)
   ctx.effect(() => {
-    mount()
-    return ctx.on('internal/service', (name) => {
-      if (name === 'webServer') mount()
+    panel.attach(ctx)
+    const off = ctx.on('internal/service', (name) => {
+      if (name === 'webServer') panel.attach(ctx)
     })
+    return () => {
+      off()
+      panel.detach()
+    }
   })
 }

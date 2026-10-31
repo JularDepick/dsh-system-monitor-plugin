@@ -63,12 +63,21 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
     },
     async execute(args, exec) {
       const incoming = Array.isArray(args.handles) ? (args.handles as unknown[]) : []
-      // 条数上限:超出部分不进入采集集合,只随回执按拒绝计数返给调用方
-      const list = incoming.slice(0, MAX_REPORTED_HANDLES)
-      const overflow = incoming.length - list.length
+      // 先按 pid 去重再截断:重复句柄不该占用单次名额
+      const unique: unknown[] = []
+      const uniquePids = new Set<number>()
+      for (const item of incoming) {
+        const pid = (item as { pid?: unknown } | null)?.pid
+        if (typeof pid === 'number' && uniquePids.has(pid)) continue
+        if (typeof pid === 'number') uniquePids.add(pid)
+        unique.push(item)
+      }
+      // 条数上限:超出部分不进入采集集合,按拒绝计数(带上本次被丢掉的条数)返给调用方
+      const list = unique.slice(0, MAX_REPORTED_HANDLES)
+      const overflow = unique.length - list.length
       const fallbackSession = callerSessionId(exec)
       const rejected: ReportReceipt['rejected'] = overflow > 0
-        ? [{ pid: Number.NaN, reason: `超出单次上限 ${MAX_REPORTED_HANDLES} 条` }]
+        ? [{ pid: 0, reason: `超出单次上限 ${MAX_REPORTED_HANDLES} 条,本批另有 ${overflow} 条未纳入` }]
         : []
       const accepted: ProcessHandle[] = []
       const seen = new Set<number>()

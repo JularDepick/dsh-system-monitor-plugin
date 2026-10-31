@@ -296,7 +296,7 @@ dsh-system-monitor-plugin: 监控 dsh 进程及其派生子进程的资源占用
 | 项目 | 选型 |
 |:---:|:---:|
 | 语言 | TypeScript,ESM(`type: module`) |
-| 构建 | tsdown(构建产物目录不入版本控制;打包产物归位后用于分发,构建前置清理旧包) |
+| 构建 | tsdown(构建产物目录不入版本控制;打包产物打包后由归位脚本移入发布目录,并清理本包的历史 tarball) |
 | 包管理 | pnpm |
 | 目标 dsh 版本 | `0.2.1-rc.1` 至 `0.2.1-rc.5`(五版本支持,即 `>=0.2.1-rc.1` 且 `<=0.2.1-rc.5`) |
 | 运行时依赖 | `@deepseek-ai/schemastery` `~3.18.5`(`dependencies`,无状态工具包);`@deepseek-ai/cordis` `~4.0.5` 与 `@deepseek-ai/dsh-tools`(`peerDependencies` + `devDependencies`,与宿主共享实例,运行时由宿主/profile 提供);`@deepseek-ai/dsh-tools` 的 peer 范围写成受支持 dsh 版本的区间(`>=0.2.1-rc.1 <=0.2.1-rc.5`),devDependency 取该集合的最新受支持版本(0.2.1-rc.5)供类型检查;dsh 前缀的 peer 自 dsh 0.2.0-rc.2 起被宿主强制校验,自 0.2.1-rc.1 起由 `engines.dsh` 优先决定(见设计细节 宿主版本兼容性) |
@@ -317,7 +317,7 @@ dsh-system-monitor-plugin: 监控 dsh 进程及其派生子进程的资源占用
 | 面板数据(panel) | 经 host webserver 注册数据端点,CPU 占用率与内存占用只经此出口 |
 | 泳道配色(lane-colors) | 泳道预备颜色池的归一化、中间色混合与取色方案(循环复用或自动取间色新增)纯逻辑 |
 | 客户端面板(client) | 浏览器端注册会话区域 系统监控 标签页,同源轮询面板数据 |
-| 翻译(translation) | 面板文案的键集参照与多语言预设分发(三份 INI 随包发布;运行时文案由客户端字典经宿主 locale 服务注册) |
+| 翻译(translation) | 面板文案的键集参照与多语言预设分发(目录内只有三份 INI 文件,无运行时代码;文案由客户端字典经宿主 locale 服务注册) |
 
 数据边界: 监控数据不得经工具输出,服务接口,事件通道暴露给 dsh 主体或模型,仅 UI 面板展示
 
@@ -352,7 +352,7 @@ dsh-system-monitor-plugin/
     ├── constants.ts        # 全局常量与设计细节
     ├── client/             # 客户端插件(槽注册,面板组件,文案字典)
     ├── monitor/            # 系统监控模块(采集器,时钟节拍,汇报工具,面板数据,类型)
-    └── translation/        # 翻译预设(键集参照与多语言分发)
+    └── translation/        # 翻译预设(三份 INI,键集参照与多语言分发)
 ```
 
 > 指工作目录的树形图结构文本,默认采用 `src/` 源码结构,具体结构以本段落具体值和项目状态优先;当目录结构发生变化时需要自主更新并告知用户
@@ -371,7 +371,7 @@ dsh-system-monitor-plugin/
 
 | 文件 | 功能说明 |
 |:---:|:---:|
-| `package.json` | bundle manifest(`dsh.bundle` 指向 patch,`dsh.client` 客户端面),ESM 声明,`main`/`types` 指向构建产物,构建脚本(`prepare` 自动构建),发布字段(license/repository/engines) |
+| `package.json` | bundle manifest(`dsh.bundle` 指向 patch,`dsh.client` 客户端面),ESM 声明,`main`/`types` 指向构建产物,构建脚本(`prepare` 自动构建),发布字段(license/repository/author/homepage/keywords/engines) |
 | `cordis.patch.yml` | 配置层 patch,按包名插入插件行 |
 | `tsconfig.json` | TypeScript 类型检查配置 |
 | `tsdown.config.ts` | 构建配置,产物为服务端 ESM 入口与类型声明,以及固定名的客户端脚本 |
@@ -414,7 +414,7 @@ dsh-system-monitor-plugin/
 - 依赖分区: `@deepseek-ai/cordis` 与 `@deepseek-ai/dsh-tools` 同时声明在 `peerDependencies` 与 `devDependencies`(与宿主共享实例,运行时由宿主或 profile 提供;devDependency 副本供类型检查与独立测试);`@deepseek-ai/schemastery` 作为无状态工具包留在 `dependencies`;客户端面依赖包(ui-conversation,ui-primitives,ui-renderer,ui-slots)以 `devDependencies` 引入;`@types/node` 的主版本与 `engines.node` 的下限对齐(同为 20),使类型面不会用到高于声明下限才有的 API
 - 客户端面声明: `package.json` 的 `dsh.client` 为 `{ platform: 'web', inject: ['@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-conversation'] }`;`inject` 填真实包名(供客户端组合排序,非 Cordis 服务注入),客户端服务的注入由 `src/client/index.tsx` 导出的 `inject` 承担
 - 文档语言核心: 中文(`README.md` 为中文主 README,英文为额外文档)
-- 翻译与加载行为: 三份 INI 作为键集参照与多语言预设随包分发,运行时不加载 —— 面板文案全部来自客户端字典(经宿主 locale 服务注册,未命中回退宿主语言链),INI 与字典的键集及占位符由语法验证脚本(`scripts/syntax-check.mjs`,经 `pnpm run check` 触发)校验: 目录扫描发现全部 ini、`[meta]` 四键与版本号/语言/时间格式、重复键、zh 与 en 之间的键集与占位符、两套字典与各自 ini 的双向比对、模板与 zh-CN 逐字节一致、英文文件不得含中日韩字符,以及界面用到的字面键必须有词条
+- 翻译与加载行为: 三份 INI 作为键集参照与多语言预设随包分发,运行时不加载 —— 面板文案全部来自客户端字典(经宿主 locale 服务注册,未命中回退宿主语言链),INI 与字典的键集及占位符由语法验证脚本(`scripts/syntax-check.mjs`,经 `pnpm run check` 触发)校验: 目录扫描发现全部 ini,`[meta]` 四键与版本号/语言/时间格式,重复键,zh 与 en 之间的键集与占位符,两套字典与各自 ini 的双向比对(含取值逐字相同),模板与 zh-CN 逐字节一致,英文文件不得含中日韩或全角字符,以及界面用到的字面键与 translate 键必须有词条
 - 维护规则: 按需核对 `docs/dsh-dev-docs/` 下已收录版本与官方仓库 `docs/user/develop` 是否过时,过时则按官方收录流程更新到新版本目录
 - 文档口径: `AGENTS.md` 守则区(第一部)保持上游模板原文形态,不按守则第 12 章做标点半角化;守则区内的本地补充条文按原样保留;`docs/dsh-dev-docs/` 下的官方文档收录副本豁免标点规范化与 不提忽略路径 两条规则;其余项目自有文档遵循守则第 12 章
 - 模板版本来源: 守则正文合并自上游 `main` 分支,该分支自述模板版本 `v0.2.2`,而截至核对时上游最新 tag 为 `v0.2.1`(`v0.2.2` 尚未打 tag,且该分支第 19 章仍写 `v0.2.1`);本项目统一声明为 `v0.2.2`,后续按守则第 19 章流程升级时注意上游自述版本号与 tag 的差异
@@ -450,8 +450,8 @@ dsh-system-monitor-plugin/
 ```
 pnpm install                          # 安装依赖
 pnpm typecheck                        # tsc --noEmit 类型检查
-pnpm build                            # 构建产物(前置清理旧打包产物)
-node scripts/syntax-check.mjs         # 语法验证(仅解析不构建,不读 tsconfig,不解析依赖)
+pnpm build                            # 构建产物
+node scripts/syntax-check.mjs         # 语法验证(仅解析不构建;另做 JSON 解析与翻译四路比对)
 node <本地校验脚本>                    # 构建产物冒烟断言(脚本位于本地临时目录,不入版本控制)
 pnpm pack                             # 打包 npm tarball(prepare 自动先构建)
 npm publish --dry-run                 # npmjs 发布预演校验
@@ -517,9 +517,9 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 
 | 脚本 | 用途 |
 |:---:|:---:|
-| `scripts/clean-release.cjs` | 构建前置: 清空旧打包产物 |
-| `scripts/pack-to-release.cjs` | 打包后置: 把 tarball 归位到打包产物目录 |
-| `scripts/syntax-check.mjs` | 语法验证(仅解析不构建,覆盖 `src/` 与 `scripts/`) |
+| `scripts/clean-release.cjs` | 打包后置: 删除本包的历史 tarball(按包名前缀与版本号段识别,不动发布目录内的其它文件) |
+| `scripts/pack-to-release.cjs` | 打包后置: 把 tarball 归位到打包产物目录;找不到本次产物时以非 0 退出 |
+| `scripts/syntax-check.mjs` | 语法验证(仅解析不构建;覆盖 `src/`、`scripts/` 与根目录构建配置,并做 JSON 解析与翻译四路比对) |
 | `scripts/check-official-docs.mjs` | 官方文档收录校验(只读 dry-run:比对 `docs/dsh-dev-docs/` 与官方仓库同版本目录的清单与内容,不写任何文件;官方源为私有仓库时需 `DSH_DOCS_TOKEN`,镜像源经 `DSH_DOCS_API_BASE` 与 `DSH_DOCS_RAW_BASE` 覆盖) |
 
 #### GitHub Actions 工作流(默认未启用扩展项)
