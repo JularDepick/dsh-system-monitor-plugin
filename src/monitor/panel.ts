@@ -23,17 +23,29 @@ export class MonitorPanel {
     private readonly options: () => PanelOptions,
   ) {}
 
-  /** 注册面板数据路由(webServer 缺失时静默跳过) */
+  /** 是否已挂载数据路由(宿主重复广播 internal/service 时不重复注册) */
+  private attached = false
+
+  /** 注册面板数据路由(webServer 缺失时静默跳过;重复调用只挂一次) */
   attach(ctx: Context): void {
+    if (this.attached) return
     const webServer = ctx.get('webServer')
     if (!webServer) return
-    ctx.effect(() => webServer.register({
-      kind: 'exact',
-      path: MONITOR_DATA_PATH,
-      handler: (_req: IncomingMessage, res: ServerResponse) => {
-        void this.respond(res)
-      },
-    }))
+    this.attached = true
+    ctx.effect(() => {
+      const dispose = webServer.register({
+        kind: 'exact',
+        path: MONITOR_DATA_PATH,
+        handler: (_req: IncomingMessage, res: ServerResponse) => {
+          // 客户端提前断开时写响应会抛错,不得变成未处理的 Promise 拒绝
+          void this.respond(res).catch(() => {})
+        },
+      })
+      return () => {
+        this.attached = false
+        if (typeof dispose === 'function') dispose()
+      }
+    })
   }
 
   /**
@@ -52,6 +64,8 @@ export class MonitorPanel {
      */
     const lastError = this.collector.getLastError()
     const stale = lastError === null || snapshot === null ? snapshot : { ...snapshot, degraded: true, error: lastError }
+    // 占位快照只带真实失败原因(没有失败时不写 error 字段,避免出现 error: null)
+    const placeholderError = this.collector.getLastError()
     const payload = stale ?? {
       sampledAt: 0,
       pollInterval: this.collector.pollInterval,
@@ -73,11 +87,15 @@ export class MonitorPanel {
         idleCpuPercent: 0,
         idleMemoryPercent: 0,
       },
-      error: this.collector.getLastError(),
+      ...(placeholderError === null ? {} : { error: placeholderError }),
     }
     // 展示选项随每次响应下发:设置页改动插件配置后,面板下一次轮询即按新选项渲染
     const body = JSON.stringify({ ...payload, panelOptions: this.options() })
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(body)
+    try {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(body)
+    } catch {
+      // 响应已关闭(客户端断开):丢弃本次结果,由下一次轮询重新取数
+    }
   }
 }

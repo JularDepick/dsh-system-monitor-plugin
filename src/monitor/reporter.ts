@@ -9,7 +9,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { REPORT_TOOL_NAME } from '../constants'
+import { MAX_HANDLE_NAME_LENGTH, MAX_HANDLE_SESSION_ID_LENGTH, MAX_REPORTED_HANDLES, REPORT_TOOL_NAME } from '../constants'
 import { callerSessionId } from './attribution'
 import type { ProcessCollector } from './collector'
 import type { ProcessHandle, ReportReceipt } from './types'
@@ -20,18 +20,24 @@ function validateHandle(raw: unknown): string | null {
   const item = raw as Record<string, unknown>
   if (!Number.isInteger(item.pid) || (item.pid as number) <= 0) return '进程标识必须为正整数'
   if (item.name !== undefined && typeof item.name !== 'string') return '可读名称必须为字符串'
+  if (typeof item.name === 'string' && item.name.length > MAX_HANDLE_NAME_LENGTH) {
+    return `可读名称不得超过 ${MAX_HANDLE_NAME_LENGTH} 个字符`
+  }
   if (item.parentPid !== undefined && (!Number.isInteger(item.parentPid) || (item.parentPid as number) <= 0)) {
     return '父进程标识必须为正整数'
   }
   if (item.sessionId !== undefined && (typeof item.sessionId !== 'string' || item.sessionId.length === 0)) {
     return '会话标识必须为非空字符串'
   }
+  if (typeof item.sessionId === 'string' && item.sessionId.length > MAX_HANDLE_SESSION_ID_LENGTH) {
+    return `会话标识不得超过 ${MAX_HANDLE_SESSION_ID_LENGTH} 个字符`
+  }
   return null
 }
 
-/** 注册进程句柄汇报工具 */
+/** 注册进程句柄汇报工具(经 ctx.effect 纳入插件生命周期,卸载时自动注销) */
 export function registerReporter(ctx: Context, collector: ProcessCollector): void {
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: REPORT_TOOL_NAME,
     description: '向系统监控插件汇报无法自主识别的进程句柄',
     parameters: {
@@ -56,9 +62,14 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args, exec) {
-      const list = Array.isArray(args.handles) ? (args.handles as unknown[]) : []
+      const incoming = Array.isArray(args.handles) ? (args.handles as unknown[]) : []
+      // 条数上限:超出部分不进入采集集合,只随回执按拒绝计数返给调用方
+      const list = incoming.slice(0, MAX_REPORTED_HANDLES)
+      const overflow = incoming.length - list.length
       const fallbackSession = callerSessionId(exec)
-      const rejected: ReportReceipt['rejected'] = []
+      const rejected: ReportReceipt['rejected'] = overflow > 0
+        ? [{ pid: Number.NaN, reason: `超出单次上限 ${MAX_REPORTED_HANDLES} 条` }]
+        : []
       const accepted: ProcessHandle[] = []
       const seen = new Set<number>()
       for (const raw of list) {
@@ -86,5 +97,5 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
       }
       return JSON.stringify(receipt)
     },
-  }))
+  })))
 }

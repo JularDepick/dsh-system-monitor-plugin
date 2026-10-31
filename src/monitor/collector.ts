@@ -111,7 +111,8 @@ export function parseCimDate(value: unknown): number | undefined {
 
 /** 解析 PowerShell 输出的 JSON 进程列表(单对象时包装为数组;导出以便纯函数测试) */
 export function parseRecords(text: string): ProcessRecord[] {
-  const data = JSON.parse(text) as unknown
+  // 去掉 UTF-8 BOM:PowerShell 重定向输出可能带 BOM,直接 JSON.parse 会整轮失败并退到降级链
+  const data = JSON.parse(text.replace(/^\uFEFF/, '')) as unknown
   const list = Array.isArray(data) ? data : [data]
   return list
     .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
@@ -119,12 +120,14 @@ export function parseRecords(text: string): ProcessRecord[] {
     // 计入「其他应用」会让空闲恒为 0、其他应用恒等于整机占用, 故与 ps 链一致按 pid 大于 0 过滤
     .filter((item) => Number.isInteger(item.ProcessId) && (item.ProcessId as number) > 0)
     .map((item) => {
+      const cpuReadable = typeof item.cpu === 'number' && Number.isFinite(item.cpu)
       const record: ProcessRecord = {
         pid: item.ProcessId as number,
         parentPid: Number.isInteger(item.ParentProcessId) ? (item.ParentProcessId as number) : null,
         name: typeof item.Name === 'string' ? item.Name : String(item.ProcessId),
-        cpuSeconds: typeof item.cpu === 'number' && item.cpu > 0 ? item.cpu : 0,
+        cpuSeconds: cpuReadable ? (item.cpu as number) : 0,
         workingSetBytes: typeof item.WorkingSetSize === 'number' && item.WorkingSetSize > 0 ? item.WorkingSetSize : 0,
+        ...(cpuReadable ? {} : { cpuUnreadable: true }),
       }
       const startTimeMs = parseCimDate(item.CreationDate)
       if (startTimeMs === undefined) return record
@@ -384,8 +387,11 @@ export function parsePsRecords(
     if (!Number.isInteger(pid) || pid <= 0) continue
     let parentPid: number | null = null
     let cpuSeconds = 0
+    let cpuUnreadable = false
     let workingSetBytes = 0
     let startTimeMs: number | undefined
+    // 不可读计数按「进程数」计,不按字段数计(同一进程多个字段不可读仍只算一个不可读进程)
+    let unreadableField = false
     layout.forEach((field, index) => {
       const value = fields[index]
       if (field === 'ppid') {
@@ -393,7 +399,10 @@ export function parsePsRecords(
         parentPid = Number.isInteger(parsed) && parsed > 0 ? parsed : null
       } else if (field === 'time') {
         if (PS_TIME_PATTERN.test(value)) cpuSeconds = parseCpuSeconds(value)
-        else if (stats) stats.unreadable += 1
+        else {
+          cpuUnreadable = true
+          unreadableField = true
+        }
       } else if (field === 'etime') {
         // ps 只给已运行时长,故启动时刻由采样时刻反推(解析不了时不猜值)
         const elapsed = parseElapsedSeconds(value)
@@ -401,15 +410,17 @@ export function parsePsRecords(
       } else if (field === 'rss') {
         const kb = Number(value)
         if (Number.isFinite(kb) && kb > 0) workingSetBytes = kb * 1024
-        else if (!/^\d+$/.test(value) && stats) stats.unreadable += 1
+        else if (!/^\d+$/.test(value)) unreadableField = true
       }
     })
+    if (unreadableField && stats) stats.unreadable += 1
     const record: ProcessRecord = {
       pid,
       parentPid,
       name: executableBaseName(fields.slice(layout.length).join(' ') || String(pid)),
       cpuSeconds,
       workingSetBytes,
+      ...(cpuUnreadable ? { cpuUnreadable: true } : {}),
     }
     records.push(startTimeMs === undefined ? record : { ...record, startTimeMs })
   }
@@ -537,6 +548,8 @@ export class ProcessCollector {
   private snapshot: MonitorSnapshot | null = null
   /** 最近一次查询失败原因(诊断用) */
   private lastError: string | null = null
+  /** 平台显示名(首次采样时解析一次并缓存;Linux 上要读 /etc/os-release,不必每轮读) */
+  private platformLabel: string | null = null
 
   /** 构造采集器 */
   constructor(
@@ -653,6 +666,13 @@ export class ProcessCollector {
       const key = this.baselineKeyOf(record)
       aliveKeys.add(key)
       const previous = this.lastCpu.get(key)
+      if (record.cpuUnreadable === true) {
+        // 本轮累计时间不可读:该进程本轮记 0,并丢弃基准,使下一轮从新的观测点重新起算,
+        // 不把整段不可读窗口的累计时间算进一个 1 秒窗口(否则会读出一个极大的 CPU 峰值)
+        cpuPercentByPid.set(record.pid, 0)
+        this.lastCpu.delete(key)
+        continue
+      }
       const cpuPercent = previous !== undefined && elapsed > 0 && record.cpuSeconds >= previous
         ? ((record.cpuSeconds - previous) / elapsed / this.cpuDenominator) * 100
         : 0
@@ -682,12 +702,11 @@ export class ProcessCollector {
     const processes: ResourceSample[] = order.map((pid) => {
       const record = byPid.get(pid)!
       const reportedHandle = this.reported.get(pid)
+      const parentPid = reportedHandle?.parentPid ?? record.parentPid ?? undefined
       const handle: ProcessHandle = {
         pid,
         name: reportedHandle?.name ?? record.name,
-        ...(reportedHandle?.parentPid ?? record.parentPid) === undefined
-          ? {}
-          : { parentPid: reportedHandle?.parentPid ?? record.parentPid! },
+        ...(parentPid === undefined ? {} : { parentPid }),
       }
       const owner = owners.get(pid)
       return {
@@ -736,6 +755,11 @@ export class ProcessCollector {
     // 读到但无权读取的进程既不计入 dsh 集合,也不会计入「其他应用」,会使「空闲」偏高,
     // 故与查询链降级一并标注,由面板显示为采集降级
     const unreadableCount = this.query.unreadable ?? 0
+    // 空采样或采样集合里没有 dsh 根进程,说明查询链这次没拿到有效数据:
+    // 仍要给出快照(面板保留旧数据并重试),但必须标成降级,不能让界面读成「正常且 0 进程」
+    const sampleSuspect = records.length === 0 || !byPid.has(this.rootPid)
+    // 平台显示名只解析一次(首次采样时求值):Linux 上它要读 /etc/os-release,不必每轮同步读一次
+    this.platformLabel ??= resolvePlatformLabel()
     this.snapshot = {
       sampledAt: now,
       pollInterval: this.pollInterval,
@@ -744,8 +768,8 @@ export class ProcessCollector {
       cpuQuotaCores: this.limits.cpuQuotaCores,
       memoryLimitBytes: this.limits.memoryLimitBytes,
       rootPid: this.rootPid,
-      platform: resolvePlatformLabel(),
-      degraded: this.query.degraded || unreadableCount > 0,
+      platform: this.platformLabel,
+      degraded: this.query.degraded || unreadableCount > 0 || sampleSuspect,
       unreadableCount,
       processes,
       totals: {

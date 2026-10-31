@@ -68,8 +68,14 @@ export interface ProcessRecord {
   parentPid: number | null
   /** 进程名称 */
   name: string
-  /** 累计 CPU 时间(秒) */
+  /**
+   * 累计 CPU 时间(秒)。
+   * 平台读不到该字段时置 0 并同时置 `cpuUnreadable`,采集器据此跳过该轮的差分基准更新 ——
+   * 否则下一轮读到真实累计值会把整段生命周期算进一个窗口,面板出现一次极大 CPU%。
+   */
   cpuSeconds: number
+  /** 累计 CPU 时间是否不可读(不可读时 cpuSeconds 只是占位 0,不代表真实占用) */
+  cpuUnreadable?: boolean
   /** 工作集内存占用(字节) */
   workingSetBytes: number
   /**

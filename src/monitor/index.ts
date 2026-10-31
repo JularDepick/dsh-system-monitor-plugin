@@ -11,6 +11,7 @@
 import { basename } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config } from '../config'
+import { MAX_POLL_INTERVAL, MIN_POLL_INTERVAL } from '../constants'
 import { OwnerResolver, readProcessEnviron } from './attribution'
 import type { SessionInfo } from './attribution'
 import { ProcessCollector, createPlatformQuery } from './collector'
@@ -137,8 +138,11 @@ function unhookSubprocess(): void {
 export function setup(ctx: Context, config: Config): void {
   const watcher = new ChildSpawnWatcher()
   const resolver = new OwnerResolver(readProcessEnviron, process.pid)
+  // 轮询间隔在进入采集器前收敛到合规区间:配置 schema 已限界,这里再兜底一次,
+  // 避免绕过 schema 的调用方(或超 32 位上限的定时器延时被压成 1 毫秒)把轮询变成查询进程风暴
+  const pollInterval = Math.min(MAX_POLL_INTERVAL, Math.max(MIN_POLL_INTERVAL, Math.round(config.pollInterval)))
   const collector = new ProcessCollector(
-    config.pollInterval,
+    pollInterval,
     process.pid,
     createPlatformQuery(),
     (pids, parents, instances) => resolver.resolve(pids, parents, instances),

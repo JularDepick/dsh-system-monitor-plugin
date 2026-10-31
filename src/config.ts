@@ -12,6 +12,7 @@ import {
   DEFAULT_LANE_COLOR_STRATEGY,
   LANE_COLOR_STRATEGIES,
   MAX_LANE_COLOR_POOL_SIZE,
+  MAX_POLL_INTERVAL,
   MIN_LANE_COLOR_POOL_SIZE,
   DEFAULT_LANE_NAMES,
   DEFAULT_PANEL_COLUMNS,
@@ -25,7 +26,7 @@ import type { CpuScope, PanelColumns } from './constants'
 import type { LaneColorStrategy } from './monitor/lane-colors'
 
 export interface Config {
-  /** 资源采集轮询间隔(毫秒,不低于 `MIN_POLL_INTERVAL`) */
+  /** 资源采集轮询间隔(毫秒,取值区间 `MIN_POLL_INTERVAL` 至 `MAX_POLL_INTERVAL`) */
   pollInterval: number
   /** 是否在占比条泳道内显示进程/会话名称(关闭后仅保留悬停提示) */
   laneNames: boolean
@@ -40,7 +41,7 @@ export interface Config {
   retainRounds: number
   /**
    * 泳道预备颜色池:普通进程/会话按顺序取用的颜色,用户可增删改
-   * (数量不少于 `MIN_LANE_COLOR_POOL_SIZE`,读取时会归一化并补足)。
+   * (数量区间 `MIN_LANE_COLOR_POOL_SIZE` 至 `MAX_LANE_COLOR_POOL_SIZE`,读取时会归一化并补足)。
    */
   laneColorPool: string[]
   /** 泳道颜色取色方案:循环复用(`cycle`)或自动取间色新增(`midpoint`) */
@@ -48,11 +49,14 @@ export interface Config {
 }
 
 export const Config: Schema<Config> = Schema.object({
-  pollInterval: Schema.number().min(MIN_POLL_INTERVAL).default(DEFAULT_POLL_INTERVAL),
+  pollInterval: Schema.number().min(MIN_POLL_INTERVAL).max(MAX_POLL_INTERVAL).step(1).default(DEFAULT_POLL_INTERVAL),
   laneNames: Schema.boolean().default(DEFAULT_LANE_NAMES),
   columns: Schema.union([1, 2]).default(DEFAULT_PANEL_COLUMNS),
   cpuScope: Schema.union(['machine', 'core']).default(DEFAULT_CPU_SCOPE),
   retainRounds: Schema.number().min(MIN_RETAIN_ROUNDS).max(MAX_RETAIN_ROUNDS).step(1).default(DEFAULT_RETAIN_ROUNDS),
-  laneColorPool: Schema.array(Schema.string()).default([...DEFAULT_LANE_COLOR_POOL]),
+  laneColorPool: Schema.array(Schema.string())
+    .min(MIN_LANE_COLOR_POOL_SIZE)
+    .max(MAX_LANE_COLOR_POOL_SIZE)
+    .default([...DEFAULT_LANE_COLOR_POOL]),
   laneColorStrategy: Schema.union([...LANE_COLOR_STRATEGIES]).default(DEFAULT_LANE_COLOR_STRATEGY),
 })
