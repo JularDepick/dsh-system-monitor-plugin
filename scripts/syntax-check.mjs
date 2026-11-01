@@ -98,8 +98,9 @@ if (iniNames.length === 0) failures.push('src/translation  未发现任何 .ini'
 
 const packVersion = manifests['package.json']?.version
 const expectedFor = typeof packVersion === 'string' ? 'v' + packVersion : null
-// 英文侧禁用字符集: 中日韩文字, 以及全角标点区(、。「」 与 ，：；（） 等)
-const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/
+// 英文侧禁用字符集: 中日韩文字, 全角标点区(、。「」 与 ，：；（） 等),
+// 以及通用标点区的弯引号与间隔号(规范明确不用的 ‘’“” 与 ·, 它们不在上面两个区间里)
+const CJK = /[\u00b7\u2018-\u201d\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/
 
 function parseIni(name) {
   const text = readFileSync(join(iniDir, name), 'utf8')

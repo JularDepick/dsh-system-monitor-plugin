@@ -25,15 +25,17 @@ Supports dsh 0.2.1-rc.1 through 0.2.1-rc.5
 - Standalone palette: the panel uses its own blue-and-white palette (light and dark variants); share bars and table swatches are colored by role, with a fixed semantic color for the main process and host, the subagent total, other applications and idle
 - Lane color pool: ordinary processes and sessions take pool colors in order, and the pool can be added to, edited or trimmed in the plugin config and in the panel settings sub-page (16 colors by default, limited to 10 to 64); when there are more members than pool colors the lane color strategy decides, recycling existing colors (default) or auto-inserting the midpoint between two neighbouring colors (the result is written into the browser-side local preference)
 - Handle reporting: a reporting tool allows the Agent to report process handles (e.g. subagent processes) that the plugin cannot identify on its own
-- Status and diagnostics: the panel reports one of three states (normal / degraded / data source unavailable; degradation has three causes - the query source fell back to a secondary command, some processes were readable but not accessible (making readings run slightly high), or the round sampled nothing / missed the dsh root process), and the system info row lists the sampling time, platform, poll interval, logical processors, total memory, the container quota when present, the dsh process identity and the other-application process count, plus the unreadable process count while degraded; CPU or memory values at or above 90% are highlighted
+- Status and diagnostics: the panel reports one of three states (normal / degraded / data source unavailable; degradation has three causes - the query source fell back to a secondary command, some processes could be listed but not read (insufficient permissions) (making readings run slightly high), or the round sampled nothing / missed the dsh root process), and the system info row lists the sampling time, platform, poll interval, logical processors, total memory, the container quota when present, the dsh process identity and the other-application process count, plus the unreadable process count when any process could not be read; CPU or memory values at or above 90% are highlighted
 - Panel-only display: monitoring data is shown on the plugin UI panel only and is not exposed to dsh
 
 
 ## Installation
 
-This release supports dsh 0.2.1-rc.1 through 0.2.1-rc.5: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and any dsh version outside that set (including 0.2.0-rc.2 and earlier) is refused at installation and at startup
+This release supports dsh 0.2.1-rc.1 through 0.2.1-rc.5: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and dsh 0.2.0-rc.2 or newer but outside that set is refused at installation and at startup; dsh older than 0.2.0-rc.2 has no compatibility gate and is not supported
 
 This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical
+
+Supported operating systems: Windows, Linux (including WSL) and macOS; other Unix-like platforms (the BSD variants, Solaris, AIX) reuse the macOS ps chain. Windows and Linux (including WSL) are covered by real-machine testing; macOS and the other platforms implement the same parsing rules but have not been verified on each platform
 
 Upgrading from an older version only needs the new package: plugin config and panel local preferences carry over unchanged, and reported handles are reported again by the Agent when needed
 
@@ -85,7 +87,7 @@ dsh-system-monitor-plugin/
 ├── tsdown.config.ts    # build configuration
 ├── version.index.md    # version index
 ├── docs/               # project docs (official plugin dev docs, dsh web tab guide, tech specs, tag and release spec)
-├── scripts/            # helper scripts (syntax check, post-pack move and cleanup)
+├── scripts/            # helper scripts (syntax check, post-pack cleanup and move)
 └── src/                # project source (entry, config, constants, client, monitor, translation)
 ```
 

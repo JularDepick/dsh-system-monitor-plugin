@@ -760,7 +760,8 @@ export class ProcessCollector {
     // 故与查询链降级一并标注,由面板显示为采集降级
     const unreadableCount = this.query.unreadable ?? 0
     // 空采样或采样集合里没有 dsh 根进程,说明查询链这次没拿到有效数据:
-    // 仍要给出快照(面板保留旧数据并重试),但必须标成降级,不能让界面读成「正常且 0 进程」
+    // 本轮仍产出快照(不沿用上一轮读数,否则界面会把旧值当成本轮),但必须标成降级,
+    // 不能让界面读成「正常且 0 进程」
     const sampleSuspect = records.length === 0 || !byPid.has(this.rootPid)
     // 平台显示名只解析一次(首次采样时求值):Linux 上它要读 /etc/os-release,不必每轮同步读一次
     this.platformLabel ??= resolvePlatformLabel()
@@ -822,7 +823,10 @@ export class ProcessCollector {
     }
   }
 
-  /** 获取最近一次面板快照,查询失败时为空 */
+  /**
+   * 获取最近一次面板快照:查询失败时保留上一份成功快照(由数据端点附上失败原因),
+   * 只有从未成功采集过才为空
+   */
   getSnapshot(): MonitorSnapshot | null {
     return this.snapshot
   }

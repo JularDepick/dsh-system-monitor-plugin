@@ -1623,7 +1623,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         </div>
         {allowExport ? (
           <div style={settingsRowStyle}>
-            <span style={settingsLabelStyle}>{t('config.export')}</span>
+            <span style={settingsLabelStyle}>{t('config.exportLabel')}</span>
             <Button variant="ghost" size="sm" onClick={() => { void copySnapshot() }}>
               {exportState === 'copied' ? t('config.exported') : exportState === 'failed' ? t('config.exportFailed') : t('config.export')}
             </Button>
