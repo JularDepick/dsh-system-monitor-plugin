@@ -469,9 +469,9 @@ const panelCss = `
 .sm-root {
   --sm-card: #ffffff; --sm-card-head: #e4eefc; --sm-track: #cfdff5;
   --sm-border: #cdddf2; --sm-border-strong: #a9c3e6;
-  --sm-text-primary: #12233d; --sm-text-secondary: #45597a; --sm-text-tertiary: #6f83a3;
+  --sm-text-primary: #12233d; --sm-text-secondary: #45597a; --sm-text-tertiary: #5b6b86;
   --sm-accent: #2470d8; --sm-active: #2470d824;
-  --sm-ok: #16a34a; --sm-warn: #c2740c; --sm-warn-surface: #fff5e3; --sm-error: #d92d20;
+  --sm-ok: #0f7a36; --sm-warn: #9c5c08; --sm-warn-surface: #fff5e3; --sm-error: #d92d20;
   --sm-idle: #dce8f9; --sm-empty: #12233d2e;
 }
 body[data-ds-dark-theme] .sm-root {
@@ -923,7 +923,7 @@ function ShareTrack(props: {
         </div>
         {/* 右端泳道:整机未被占用的资源(淡灰底色,不用纯白) */}
         <div title={`${idleName} ${idleCandidates[0]}`} style={{ flex: idleFlex, background: LANE_COLOR_IDLE, ...laneCellStyle }}>
-          {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO), PANEL_TEXT_TERTIARY_COLOR)}
+          {named(idleName, laneWidth(PANEL_SHARE_IDLE_RATIO), PANEL_TEXT_SECONDARY_COLOR)}
         </div>
       </div>
       {/* 段标签行:与三段同构,取第一个放得下的候选文字(内存行会给「数值 · 百分比」);
@@ -1895,6 +1895,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   /**
    * 把当前快照整理为纯文本(用户显式触发的导出内容)。
    * 导出只在本机剪贴板落地,不经任何 dsh 通道,也不写回采集器;口径与面板展示一致。
+   * 每行数值都自带 CPU 与内存标签 —— 文本脱离表格列头后仍能读懂。
    */
   const snapshotText = (): string => {
     const lines: string[] = [
@@ -1904,8 +1905,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       `${t('summary.totalMemory')}: ${formatBytes(snapshot.totalMemoryBytes)}`,
       `${t('config.cpuScope')}: ${cpuScope === 'core' ? t('config.cpuScopeCore') : t('config.cpuScopeMachine')}`,
       ...(quotaParts.length === 0 ? [] : [`${t('summary.quota')}: ${quotaParts.join(' / ')}`]),
-      `${t('chart.others')}: ${formatPercent(machine.othersCpu)} / ${formatPercent(machine.othersMemory)}`,
-      `${t('chart.idle')}: ${formatPercent(machine.idleCpu)} / ${formatPercent(machine.idleMemory)}`,
+      `${t('chart.others')}: ${t('table.column.cpu')} ${formatPercent(machine.othersCpu)} · ${t('table.column.memory')} ${formatPercent(machine.othersMemory)}`,
+      `${t('chart.idle')}: ${t('table.column.cpu')} ${formatPercent(machine.idleCpu)} · ${t('table.column.memory')} ${formatPercent(machine.idleMemory)}`,
     ]
     const appendCard = (
       title: string,
@@ -1918,7 +1919,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       if (extraMeta !== undefined) lines.push(extraMeta)
       groups.forEach((group, index) => {
         const stale = sampled[index] === false ? ` · ${t('row.unsampled')}` : ''
-        lines.push(`- ${rowLabel(group)}: ${formatPercent(group.cpuPercent)} / ${formatBytes(group.memoryBytes)} / ${formatPercent(group.memoryPercent)}${stale}`)
+        lines.push(`- ${rowLabel(group)}: ${t('table.column.cpu')} ${formatPercent(group.cpuPercent)} · ${t('table.column.memory')} ${formatBytes(group.memoryBytes)} (${formatPercent(group.memoryPercent)})${stale}`)
       })
     }
     appendCard(t('currentProcess.title'), t('currentProcess.count', { count: currentSessionGroups.length }), currentSessionGroups, currentCard.sampled, currentSessionSubagentMeta)

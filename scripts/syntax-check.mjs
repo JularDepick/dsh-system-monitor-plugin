@@ -9,7 +9,8 @@
  * 翻译检查是规范里提到的「本地检查」的落地点,覆盖:
  * 目录扫描发现全部 ini、[meta] 四键与版本号/语言/时间格式、重复键、
  * 三份 ini 的键集与占位符、两套字典与 ini 的双向键集与占位符、
- * 界面实际用到的字面键是否都有词条,以及英文侧不得出现中日韩字符。
+ * 界面实际用到的字面键是否都有词条、调用点传入的变量与模板占位符是否对得上、
+ * 词条是否确实被界面或标签引用(死键),以及英文侧不得出现中日韩字符。
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
@@ -234,6 +235,30 @@ function compareTranslations(label, expected, actual, options = {}) {
         ])
         for (const key of used) {
           if (!dicts['zh-CN'].has(key)) failures.push('index.tsx 用到未定义的键: ' + key)
+        }
+        // 调用点传参必须与模板占位符一一对应: 只比 ini 与字典会漏掉「模板有 {name} 却没传」
+        // 与「传了多余变量」这两类漂移(渲染时会原样留下花括号或忽略参数)
+        for (const call of client.matchAll(/\b(?:t|translate)\(\s*'([^']+)'\s*(?:,\s*(\{[^{}]*\}))?\s*\)/g)) {
+          const template = dicts['zh-CN'].get(call[1])
+          if (template === undefined) continue
+          const expected = placeholders(template)
+          // 只取对象字面量的键名(冒号前或简写),不取右侧表达式里的标识符
+          const passed = call[2] === undefined
+            ? ''
+            : [...new Set(call[2].slice(1, -1).split(',').map((entry) => entry.split(':')[0].trim()).filter((name) => /^[A-Za-z_$][\w$]*$/.test(name)))].sort().join(',')
+          if (expected !== passed) {
+            failures.push('index.tsx  ' + call[1] + ' 调用点传参与占位符不符: [' + passed + '] vs [' + expected + ']')
+          }
+        }
+        // 死键: 词条必须在界面源码里被引用(动态键的取值也是字面量,仍能命中)
+        const corpus = walk(join(root, 'src'))
+          .filter((file) => /\.(ts|tsx)$/.test(file) && !file.endsWith(join('client', 'i18n.ts')))
+          .map((file) => readFileSync(file, 'utf8'))
+          .join('\n')
+        for (const key of dicts['zh-CN'].keys()) {
+          if (!corpus.includes("'" + key + "'") && !corpus.includes('"' + key + '"')) {
+            failures.push('i18n.ts  ' + key + ' 未被界面引用(死键)')
+          }
         }
         checked += 1
       }
