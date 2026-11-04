@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.3.1-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.1)
+[![Version](https://img.shields.io/badge/Version-0.3.2-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.2)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -48,7 +48,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 When distributing a tarball:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.1.tgz
+dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.2.tgz
 ```
 
 

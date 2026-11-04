@@ -13,7 +13,7 @@ export const PLUGIN_NAME = 'dsh-system-monitor-plugin'
  * 插件版本号(面板页脚展示)。
  * 必须与 package.json 的 version 同步,迭代版本号时一并更新(见 version.index.md)。
  */
-export const PLUGIN_VERSION = '0.3.1'
+export const PLUGIN_VERSION = '0.3.2'
 
 /** 资源采集轮询间隔默认值(毫秒) */
 export const DEFAULT_POLL_INTERVAL = 1000

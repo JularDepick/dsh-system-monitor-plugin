@@ -1,6 +1,6 @@
 {
   "name": "dsh-system-monitor-plugin",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "面向 dsh 的插件: 监控 dsh 进程及其派生子进程的资源占用, 并以面板图表报告整机与各会话的 CPU 与内存占用",
   "license": "Apache-2.0",
   "repository": {
