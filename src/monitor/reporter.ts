@@ -76,16 +76,19 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
       const list = unique.slice(0, MAX_REPORTED_HANDLES)
       const overflow = unique.length - list.length
       const fallbackSession = callerSessionId(exec)
-      const rejected: ReportReceipt['rejected'] = overflow > 0
-        ? [{ pid: 0, reason: `超出单次上限 ${MAX_REPORTED_HANDLES} 条,本批另有 ${overflow} 条未纳入` }]
-        : []
+      /*
+       * 溢出条数不折成一条伪拒绝项(那会让「拒绝 1 项」与真实丢弃条数不符),
+       * 改为在文案里给出真实条数;rejected 只承载逐条校验失败项
+       */
+      const rejected: ReportReceipt['rejected'] = []
       const accepted: ProcessHandle[] = []
       const seen = new Set<number>()
       for (const raw of list) {
         const reason = validateHandle(raw)
         if (reason) {
           const pid = (raw as Record<string, unknown> | null)?.pid
-          rejected.push({ pid: typeof pid === 'number' ? pid : NaN, reason })
+          // 无法解析的 pid 记 0(JSON 无法表示 NaN,序列化后会变成 null)
+          rejected.push({ pid: typeof pid === 'number' && Number.isFinite(pid) ? pid : 0, reason })
           continue
         }
         const handle = raw as ProcessHandle
@@ -99,10 +102,11 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
       }
       collector.mergeReported(accepted)
       const detail = rejected.length > 0 ? `;拒绝 ${rejected.length} 项` : ''
+      const overflowDetail = overflow > 0 ? `;另有 ${overflow} 条超出单次上限 ${MAX_REPORTED_HANDLES} 条未纳入` : ''
       const receipt: ReportReceipt = {
         accepted: accepted.length,
         rejected,
-        message: `已纳入监控 ${accepted.length} 个进程${detail}`,
+        message: `已纳入监控 ${accepted.length} 个进程${detail}${overflowDetail}`,
       }
       return JSON.stringify(receipt)
     },

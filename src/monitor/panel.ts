@@ -35,18 +35,24 @@ export class MonitorPanel {
     const webServer = ctx.get('webServer')
     if (!webServer) return
     if (this.route !== null && this.route.server === webServer) return
-    // 实例更替,或上一次 register 抛错留下了无效记录:先摘掉旧路由再挂
+    // 实例更替:先摘掉旧路由再挂
     this.detach()
-    this.route = { server: webServer, dispose: null }
-    const dispose = webServer.register({
-      kind: 'exact',
-      path: MONITOR_DATA_PATH,
-      handler: (_req: IncomingMessage, res: ServerResponse) => {
-        // 客户端提前断开时写响应会抛错,不得变成未处理的 Promise 拒绝
-        void this.respond(res).catch(() => {})
-      },
-    })
-    this.route = { server: webServer, dispose: typeof dispose === 'function' ? dispose : null }
+    let dispose: (() => void) | null = null
+    try {
+      const registered: unknown = webServer.register({
+        kind: 'exact',
+        path: MONITOR_DATA_PATH,
+        handler: (_req: IncomingMessage, res: ServerResponse) => {
+          // 客户端提前断开时写响应会抛错,不得变成未处理的 Promise 拒绝
+          void this.respond(res).catch(() => {})
+        },
+      })
+      dispose = typeof registered === 'function' ? registered as () => void : null
+    } catch {
+      // 挂载失败(宿主未提供路由扩展点或实例已失效)不留记录:下次服务事件或再次挂载时重试
+      return
+    }
+    this.route = { server: webServer, dispose }
   }
 
   /** 摘掉当前数据路由(插件卸载或 webServer 实例更替时调用) */
@@ -73,7 +79,7 @@ export class MonitorPanel {
     const lastError = this.collector.getLastError()
     const stale = lastError === null || snapshot === null ? snapshot : { ...snapshot, degraded: true, error: lastError }
     // 占位快照只带真实失败原因(没有失败时不写 error 字段,避免出现 error: null)
-    const placeholderError = this.collector.getLastError()
+    const placeholderError = lastError
     const payload = stale ?? {
       sampledAt: 0,
       pollInterval: this.collector.pollInterval,
