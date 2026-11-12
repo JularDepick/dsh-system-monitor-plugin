@@ -175,7 +175,8 @@ export function resolveClkTck(root = '/proc'): number {
   writeCache({
     version: CLK_TCK_CACHE_VERSION,
     clkTck: value,
-    probes: appendProbeHistory(raw?.probes, {
+    // 历史只在缓存结构版本一致时续写:结构变化后旧记录不再可信,一并作废
+    probes: appendProbeHistory(raw?.version === CLK_TCK_CACHE_VERSION ? raw.probes : undefined, {
       at: new Date().toISOString(),
       platform: process.platform,
       getconf,

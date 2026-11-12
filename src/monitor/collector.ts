@@ -522,10 +522,21 @@ export class ProcessCollector {
    * 读不到即为非容器环境,后续回退到可见总量。
    */
   private readonly limits = readCgroupLimits()
-  /** CPU 百分比分母:有配额按配额核数(可为小数),否则按可见逻辑处理器数 */
-  private readonly cpuDenominator = Math.max(1, this.limits.cpuQuotaCores ?? this.cpuCount)
-  /** 内存百分比分母:有配额按配额字节数,否则按可见物理内存总量 */
-  private readonly memoryDenominator = this.limits.memoryLimitBytes ?? this.totalMemoryBytes
+  /**
+   * CPU 百分比分母:有配额按配额核数,否则按可见逻辑处理器数。
+   * 配额核数可以是小数(如 0.5 核),故不能对配额取下限 1 —— 那会把小数配额的占用率按整核摊薄一半;
+   * 只有回退到可见核数时才补一个下限,避免除零。
+   */
+  private readonly cpuDenominator = this.limits.cpuQuotaCores ?? Math.max(1, this.cpuCount)
+  /**
+   * 内存百分比分母:配额小于可见物理内存时按配额,否则按可见物理内存总量。
+   * 与 advance 里判定「配额是否生效」用同一条件 —— 否则配额大于可见总量时分母被放大,
+   * 「其他应用」按相减得出的内存会顶到近 100%,并超过物理内存总量。
+   */
+  private readonly memoryDenominator =
+    this.limits.memoryLimitBytes !== null && this.limits.memoryLimitBytes < this.totalMemoryBytes
+      ? this.limits.memoryLimitBytes
+      : this.totalMemoryBytes
   /** Agent 汇报句柄(按 pid 合并) */
   private readonly reported = new Map<number, ProcessHandle>()
   /** 汇报句柄绑定的实例令牌(pid → 令牌;令牌变化即作废该句柄,避免 pid 复用后沿用旧名称) */

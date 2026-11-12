@@ -70,6 +70,18 @@ function readText(file: string): string | null {
 }
 
 /**
+ * 按候选顺序读取第一个存在的文件(v1 的控制器挂载点有两种布局:
+ * 合并挂载在 cpu,cpuacct/ 或按控制器分开挂载在 cpu/ 与 cpuacct/)
+ */
+function readFirstText(files: readonly string[]): string | null {
+  for (const file of files) {
+    const text = readText(file)
+    if (text !== null) return text
+  }
+  return null
+}
+
+/**
  * 读取运行环境自身的 cgroup 配额:优先统一层级(v2),其次 v1 根路径。
  * 容器内 `/sys/fs/cgroup` 即该容器的 cgroup 根,故无需解析 `/proc/self/cgroup`;
  * 非 Linux 平台直接返回空配额。
@@ -81,8 +93,8 @@ export function readCgroupLimits(root = '/sys/fs/cgroup'): CgroupLimits {
     cpuMax !== null
       ? parseCpuMax(cpuMax)
       : parseCpuCfsQuota(
-          readText(join(root, 'cpu', 'cpu.cfs_quota_us')) ?? '',
-          readText(join(root, 'cpu', 'cpu.cfs_period_us')) ?? '',
+          readFirstText([join(root, 'cpu,cpuacct', 'cpu.cfs_quota_us'), join(root, 'cpu', 'cpu.cfs_quota_us')]) ?? '',
+          readFirstText([join(root, 'cpu,cpuacct', 'cpu.cfs_period_us'), join(root, 'cpu', 'cpu.cfs_period_us')]) ?? '',
         )
   const memoryMax = readText(join(root, 'memory.max'))
   const memoryLimitBytes =
