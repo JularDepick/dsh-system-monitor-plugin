@@ -200,9 +200,11 @@ export class OwnerResolver {
     pids: readonly number[],
     parents?: ReadonlyMap<number, number | null>,
     instances?: ReadonlyMap<number, string>,
+    held: readonly number[] = [],
   ): Map<number, ProcessOwner> {
     this.parents = parents ?? new Map()
-    const alive = new Set(pids)
+    // `held` 是「本轮未采样到但要保活」的 pid(汇报句柄宽限期内):不参与归属迭代,只用于免于裁剪
+    const alive = new Set([...pids, ...held])
     // 先校验实例身份再解析:被复用的 pid 不会在当轮沿用上一进程的锚点或缓存结论
     this.pruneAnchors(alive, instances)
     this.pruneInstances(alive, instances)

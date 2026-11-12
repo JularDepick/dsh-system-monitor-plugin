@@ -608,11 +608,15 @@ export class ProcessCollector {
     private readonly rootPid: number,
     /** 系统进程查询器 */
     private readonly query: ProcessQuery = createPlatformQuery(),
-    /** 归属解析器:按当前采样进程集合与父子关系给出「进程 → 会话」归属(缺省时不解析,样本无 owner) */
+    /**
+     * 归属解析器:按当前采样进程集合与父子关系给出「进程 → 会话」归属(缺省时不解析,样本无 owner);
+     * `held` 给出本轮未采样到但仍需保活的 pid(汇报句柄宽限期内),让解析器保留其会话归属
+     */
     private readonly resolveOwners: (
       pids: readonly number[],
       parents: ReadonlyMap<number, number | null>,
       instances: ReadonlyMap<number, string>,
+      held: readonly number[],
     ) => Map<number, ProcessOwner> = () => new Map(),
     /** 汇报句柄归属同步:句柄并入监控集合时把其会话标注告知归属解析器 */
     private readonly onReported: (handle: ProcessHandle) => void = () => {},
@@ -684,9 +688,9 @@ export class ProcessCollector {
      */
     for (const pid of [...this.reported.keys()]) {
       if (!byPid.has(pid)) {
-        // 本轮读不到:宽限未到就不丢,下一轮重新尝试匹配(读到即清零)
+        // 本轮读不到:宽限内的轮次不丢,下一轮重新尝试匹配(读到即清零)
         const misses = (this.reportedMisses.get(pid) ?? 0) + 1
-        if (misses < REPORTED_HANDLE_GRACE_ROUNDS) {
+        if (misses <= REPORTED_HANDLE_GRACE_ROUNDS) {
           this.reportedMisses.set(pid, misses)
         } else {
           this.reported.delete(pid)
@@ -756,7 +760,12 @@ export class ProcessCollector {
       const token = record.instanceToken ?? this.instanceTokens.get(record.pid)?.token
       if (token !== undefined) instances.set(record.pid, token)
     }
-    const owners = this.resolveOwners(order, parents, instances)
+    /*
+     * 宽限期内的汇报句柄本轮不在采样集合里,但不应因此丢掉会话归属:
+     * 解析器按采样集合裁剪汇报映射,若只传 order,句柄重新可见时 Windows 与 macOS(无进程环境信源)
+     * 会把它归到「未归因」,汇报时标注的会话随之丢失
+     */
+    const owners = this.resolveOwners(order, parents, instances, [...this.reportedMisses.keys()])
     const memoryPercentOf = (bytes: number): number =>
       this.memoryDenominator > 0 ? (bytes / this.memoryDenominator) * 100 : 0
     const processes: ResourceSample[] = order.map((pid) => {

@@ -132,7 +132,8 @@ function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher, scope: symbol)
   // 该实例已有包装:本作用域登记自己的观察器即可,不重复包装
   if (existing !== undefined) {
     existing.watchers.set(scope, watcher)
-    return
+    // 宿主就地替换了派生方法(热更新):原包装已不在实例上,按当前方法重新包装,派生归属不会静默失效
+    if (service.spawn === existing.wrapped) return
   }
   /*
    * 原方法优先取服务实例本体上的方法:视图是 Cordis 代理,读回的可能是影子方法,
@@ -140,7 +141,9 @@ function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher, scope: symbol)
    */
   const instanceSpawn = (service as unknown as { spawn?: unknown }).spawn
   const original = (typeof instanceSpawn === 'function' ? instanceSpawn : view.spawn) as SubprocessFace['spawn']
-  const hook: SpawnHook = { original, wrapped: original, watchers: new Map() }
+  // 重新包装时沿用原记录(保留已登记的作用域),基准则换成实例当前的方法
+  const hook: SpawnHook = existing ?? { original, wrapped: original, watchers: new Map() }
+  hook.original = original
   const wrapped = function (this: unknown, spec: unknown, ...rest: unknown[]): unknown {
     /*
      * 各作用域的观察器依次开窗,宿主派生只调用一次(嵌套开窗,最内层触发真正派生),

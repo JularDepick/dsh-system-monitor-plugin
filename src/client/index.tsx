@@ -81,6 +81,7 @@ import {
   PANEL_STATE_WARN_COLOR,
   PANEL_STATE_WARN_SURFACE_COLOR,
   PANEL_STORAGE_KEY,
+  PANEL_EXPORT_TEXT_MAX_LENGTH,
   PANEL_SWATCH_SIZE,
   PANEL_TAB_ID,
   PANEL_TAB_ORDER,
@@ -222,6 +223,14 @@ function formatDateTime(value: number): string {
     `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
     `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${zone}`
   )
+}
+
+/**
+ * 把可能多行的诊断文本压成一行(导出文本按「键: 值」逐行组织,内嵌换行会打散结构)。
+ * 空白折叠后截断到 `PANEL_EXPORT_TEXT_MAX_LENGTH`
+ */
+function oneLineText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, PANEL_EXPORT_TEXT_MAX_LENGTH)
 }
 
 /**
@@ -1917,9 +1926,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       `${t('summary.sampledAt')}: ${formatDateTime(snapshot.sampledAt)}`,
       `${t('summary.status')}: ${statusLabel}`,
       // 失败原因与不可读进程数同属排障信息:导出文本脱离面板后仍要能看出本轮是否降级
-      ...(snapshot.error === undefined ? [] : [`${t('summary.error')}: ${snapshot.error}`]),
+      ...(typeof snapshot.error === 'string' && snapshot.error.length > 0
+        ? [`${t('summary.error')}: ${oneLineText(snapshot.error)}`]
+        : []),
       ...(snapshot.unreadableCount > 0 ? [`${t('summary.unreadable')}: ${snapshot.unreadableCount}`] : []),
-      `${t('summary.platform')}: ${snapshot.platform}`,
+      `${t('summary.platform')}: ${snapshot.platform || t('summary.platformUnknown')}`,
       `${t('summary.cpuCount')}: ${snapshot.cpuCount}`,
       `${t('summary.totalMemory')}: ${formatBytes(snapshot.totalMemoryBytes)}`,
       `${t('config.cpuScope')}: ${cpuScope === 'core' ? t('config.cpuScopeCore') : t('config.cpuScopeMachine')}`,
@@ -1938,7 +1949,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       if (extraMeta !== undefined) lines.push(extraMeta)
       groups.forEach((group, index) => {
         const stale = sampled[index] === false ? ` · ${t('row.unsampled')}` : ''
-        lines.push(`- ${rowLabel(group)}: ${t('table.column.cpu')} ${formatPercent(group.cpuPercent)} · ${t('table.column.memory')} ${formatBytes(group.memoryBytes)} (${formatPercent(group.memoryPercent)})${stale}`)
+        lines.push(`- ${oneLineText(rowLabel(group))}: ${t('table.column.cpu')} ${formatPercent(group.cpuPercent)} · ${t('table.column.memory')} ${formatBytes(group.memoryBytes)} (${formatPercent(group.memoryPercent)})${stale}`)
       })
     }
     appendCard(t('currentProcess.title'), t('currentProcess.count', { count: currentSessionGroups.length }), currentSessionGroups, currentCard.sampled, currentSessionSubagentMeta)

@@ -339,6 +339,13 @@ export const MAX_LANE_COLOR_POOL_SIZE = 64
 export const LANE_COLOR_STRATEGIES = ['cycle', 'midpoint'] as const
 export const DEFAULT_LANE_COLOR_STRATEGY = 'cycle'
 
+/**
+ * 快照导出里单行诊断文本的长度上限(字符)。
+ * 失败原因可能来自命令行 stderr(多行,带脚本片段),整段原样拼进「键: 值」会打散导出的逐行结构,
+ * 故压成一行并截断;长度上限同时避免一次导出被异常长的诊断撑爆
+ */
+export const PANEL_EXPORT_TEXT_MAX_LENGTH = 200
+
 /** 占比条整体外边框宽度(像素):2px,明暗主题下都清晰可辨 */
 export const PANEL_SHARE_BAR_BORDER_WIDTH = 2
 
