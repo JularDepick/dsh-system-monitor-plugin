@@ -2,7 +2,7 @@
  * 进程归属解析(会话维度)
  *
  * 把 OS 级进程样本归到具体会话,来源按优先级:
- *  1. 宿主服务:终端(PTY)会话快照给出 pid ↔ 会话;
+ *  1. 宿主服务:终端(PTY)会话快照给出 pid 与会话的映射;
  *  2. 宿主派生锚点:subprocess 派生入口的包装读出子进程 pid 与会话(见 spawn-tracking.ts);
  *  3. Agent 汇报:句柄可显式带 sessionId;
  *  4. 子进程环境(Linux/WSL):模型 shell 调用派生的进程带 DSH_SESSION_ID。
@@ -298,7 +298,8 @@ export class OwnerResolver {
     if (reportedSession !== undefined) return this.decorate(reportedSession)
 
     const cached = this.cached.get(pid)
-    if (cached !== undefined) return cached ?? undefined
+    // 命中缓存只省掉环境探测:显示名与谱系每轮重算,会话改名或父会话变更后不会停在旧值
+    if (cached !== undefined) return cached === null ? undefined : this.decorate(cached.sessionId)
 
     const probe = this.readEnviron(pid)
     if (probe.readable) {

@@ -20,7 +20,7 @@ import { ChildProcess } from 'node:child_process'
 import { SESSION_ENV_KEY } from '../constants'
 
 /** 派生锚点表:宿主派生窗口内创建的子进程标识 → 会话标识 */
-export type SpawnAnchors = ReadonlyMap<number, string>
+type SpawnAnchors = ReadonlyMap<number, string>
 
 /** 会话标识在环境表里的前缀形态(`KEY=`) */
 const SESSION_ENV_PREFIX = `${SESSION_ENV_KEY}=`
@@ -88,7 +88,7 @@ export class ChildSpawnWatcher {
   }
 
   /** 取走新解析的派生锚点(取走即清空;归属解析器自行保管并按存活进程裁剪) */
-  takeAnchors(): Map<number, string> {
+  takeAnchors(): SpawnAnchors {
     const anchors = new Map(this.pending)
     this.pending.clear()
     return anchors

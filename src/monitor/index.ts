@@ -87,7 +87,7 @@ function readSessionInfos(ctx: Context): SessionInfo[] {
   })
 }
 
-/** 读取终端 pid ↔ 会话映射(服务缺失或异常时返回空表) */
+/** 读取终端 pid 与会话的映射(服务缺失或异常时返回空表) */
 function readTerminalOwners(ctx: Context): Map<number, string> {
   const owners = new Map<number, string>()
   const agents = ctx.get('agents') as unknown as AgentsFace | undefined
@@ -113,10 +113,15 @@ function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher): void {
   if (view === undefined || typeof view.spawn !== 'function') return
   const service = serviceInstance(view)
   if (hookedSpawns.has(service)) return
-  // 原方法经服务视图取得并按调用时的 this 透传,包装不改变宿主的调用语义
-  const original = view.spawn
-  const wrapped = function (this: unknown, spec: unknown): unknown {
-    return watcher.during(watcher.sessionOf(spec), () => original.call(this, spec))
+  /*
+   * 原方法优先取服务实例本体上的方法:视图是 Cordis 代理,读回的可能是影子方法,
+   * 卸载时把影子方法写回实例就等于把包装永久留在宿主上;实例上没有该方法时才退回视图
+   */
+  const instanceSpawn = (service as unknown as { spawn?: unknown }).spawn
+  const original = (typeof instanceSpawn === 'function' ? instanceSpawn : view.spawn) as SubprocessFace['spawn']
+  const wrapped = function (this: unknown, spec: unknown, ...rest: unknown[]): unknown {
+    // 余下入参一并透传:包装只做观察,不改变宿主派生调用的签名语义
+    return watcher.during(watcher.sessionOf(spec), () => Reflect.apply(original, this, [spec, ...rest]))
   }
   try {
     service.spawn = wrapped
