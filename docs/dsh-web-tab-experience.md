@@ -97,7 +97,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 |:---:|:---:|
 | 转发事件(remote $on) | 白名单在官方 api/remotes 静态声明,外部插件**不可扩充** |
 | Typert remote(host-plugin-inventory 模式) | 最正规但需整套 typert 生成链,单包插件过重 |
-| host webserver 路由 | 最轻:host 侧 `ctx.get('webServer', false)` 可选获取 + `register({ kind: 'exact', path, handler })`,浏览器同源 fetch;服务晚出现时用 `ctx.on('internal/service')` 补挂 |
+| host webserver 路由 | 最轻:host 侧 `ctx.get('webServer', false)` 可选获取 + `register({ kind: 'exact', path, handler })`,浏览器同源 fetch;服务晚出现时用 `ctx.on('internal/service')` 补挂,并在每次轮询时再补一次(attach 命中同一实例即返回,代价只有一次 `ctx.get`):只靠服务事件时,`register` 抛错后再无重挂入口,端点会一直 404 |
 
 ### 5. 槽锚点与视图容器契约(0.1.5-rc.1 实测,0.1.7-rc.2 与 0.2.0-rc.2 发布包复核一致)
 
