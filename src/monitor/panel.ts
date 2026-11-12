@@ -69,14 +69,23 @@ export class MonitorPanel {
    * 等待超时(查询受阻等)后仍按占位快照回答,由面板继续轮询。
    */
   private async respond(res: ServerResponse): Promise<void> {
-    const snapshot = this.collector.getSnapshot() ?? await this.collector.whenSampled(PANEL_FIRST_SAMPLE_WAIT_MS)
+    /**
+     * 已有失败原因时不再等首轮:持久失败(含未适配平台)下每次请求都会白等满等待窗口,
+     * 面板的首答与失败恢复因此各迟滞一次;失败原因随占位快照立即下发,由面板改示徽章
+     */
+    const lastError = this.collector.getLastError()
+    const current = this.collector.getSnapshot()
+    const snapshot = current !== null
+      ? current
+      : lastError !== null
+        ? null
+        : await this.collector.whenSampled(PANEL_FIRST_SAMPLE_WAIT_MS)
     // 请求可能已因客户端断开而结束,避免重复写入
     if (res.writableEnded) return
     /**
      * 有旧快照但最近一轮失败时,把失败原因随旧数据一并下发:
      * 面板保留旧数据继续展示,但据此改示徽章(否则查询持续失败时界面一直显示「正常」)。
      */
-    const lastError = this.collector.getLastError()
     const stale = lastError === null || snapshot === null ? snapshot : { ...snapshot, degraded: true, error: lastError }
     // 占位快照只带真实失败原因(没有失败时不写 error 字段,避免出现 error: null)
     const placeholderError = lastError

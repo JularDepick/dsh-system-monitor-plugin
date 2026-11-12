@@ -49,8 +49,24 @@ interface SubprocessFace {
   spawn(spec: unknown): unknown
 }
 
-/** 已包装的派生入口(宿主服务实例本体 → 原始方法与包装方法),插件卸载时按此还原 */
-const hookedSpawns = new Map<SubprocessFace, { original: SubprocessFace['spawn']; wrapped: SubprocessFace['spawn'] }>()
+/** 一个宿主服务实例上的派生包装记录 */
+interface SpawnHook {
+  /** 宿主原始派生方法(卸载时还原) */
+  original: SubprocessFace['spawn']
+  /** 本插件挂上的包装方法(还原前校验原型上仍是它) */
+  wrapped: SubprocessFace['spawn']
+  /** 各插件作用域各自的派生观察器(按注册顺序打开派生窗口) */
+  watchers: Map<symbol, ChildSpawnWatcher>
+}
+
+/**
+ * 已包装的派生入口(宿主服务实例本体 → 包装记录)。
+ * 按作用域引用计数记账:同一实例被多次装配(热重载或两个 profile 实例并存)时共用同一份包装,
+ * 包装内逐个打开各作用域的派生窗口,最后一个作用域卸载才还原宿主方法 ——
+ * 早先的实现用「实例是否已挂钩」直接 return 并以模块级单例还原全部包装,
+ * 后加载的作用域会永不挂钩,先卸载的作用域又会把别人的包装一并拿掉。
+ */
+const hookedSpawns = new Map<SubprocessFace, SpawnHook>()
 
 /** Cordis 服务经代理暴露给上下文,该全局符号指向服务实例本体(包装落在本体上才稳定可查) */
 const CORDIS_ORIGINAL = Symbol.for('cordis.original')
@@ -108,39 +124,58 @@ function readTerminalOwners(ctx: Context): Map<number, string> {
  * 供派生观察器读回宿主本次创建的子进程标识(见 spawn-tracking.ts)。
  * 服务缺失或实例不可写时保持宿主原样,该平台退化为无派生归属(面板显示空态)。
  */
-function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher): void {
+function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher, scope: symbol): void {
   const view = ctx.get('subprocess') as unknown as SubprocessFace | undefined
   if (view === undefined || typeof view.spawn !== 'function') return
   const service = serviceInstance(view)
-  if (hookedSpawns.has(service)) return
+  const existing = hookedSpawns.get(service)
+  // 该实例已有包装:本作用域登记自己的观察器即可,不重复包装
+  if (existing !== undefined) {
+    existing.watchers.set(scope, watcher)
+    return
+  }
   /*
    * 原方法优先取服务实例本体上的方法:视图是 Cordis 代理,读回的可能是影子方法,
    * 卸载时把影子方法写回实例就等于把包装永久留在宿主上;实例上没有该方法时才退回视图
    */
   const instanceSpawn = (service as unknown as { spawn?: unknown }).spawn
   const original = (typeof instanceSpawn === 'function' ? instanceSpawn : view.spawn) as SubprocessFace['spawn']
+  const hook: SpawnHook = { original, wrapped: original, watchers: new Map() }
   const wrapped = function (this: unknown, spec: unknown, ...rest: unknown[]): unknown {
-    // 余下入参一并透传:包装只做观察,不改变宿主派生调用的签名语义
-    return watcher.during(watcher.sessionOf(spec), () => Reflect.apply(original, this, [spec, ...rest]))
+    /*
+     * 各作用域的观察器依次开窗,宿主派生只调用一次(嵌套开窗,最内层触发真正派生),
+     * 余下入参一并透传:包装只做观察,不改变宿主派生调用的签名与 this 语义
+     */
+    const watchers = [...hook.watchers.values()]
+    const run = (index: number): unknown => index >= watchers.length
+      ? Reflect.apply(hook.original, this, [spec, ...rest])
+      : watchers[index].during(watchers[index].sessionOf(spec), () => run(index + 1))
+    return run(0)
   }
   try {
     service.spawn = wrapped
   } catch {
     return
   }
-  hookedSpawns.set(service, { original, wrapped })
+  hook.wrapped = wrapped
+  hook.watchers.set(scope, watcher)
+  hookedSpawns.set(service, hook)
 }
 
-/** 还原被包装的派生入口(插件卸载时调用,不把包装留给宿主) */
-function unhookSubprocess(): void {
-  for (const [service, entry] of hookedSpawns) {
-    if (service.spawn === entry.wrapped) service.spawn = entry.original
+/** 注销某作用域的观察:该实例上再没有作用域时还原宿主方法(不把包装留给宿主) */
+function unhookSubprocess(scope: symbol): void {
+  for (const [service, hook] of [...hookedSpawns]) {
+    hook.watchers.delete(scope)
+    if (hook.watchers.size > 0) continue
+    if (service.spawn === hook.wrapped) service.spawn = hook.original
+    hookedSpawns.delete(service)
   }
-  hookedSpawns.clear()
 }
 
 /** 装配系统监控模块 */
 export function setup(ctx: Context, config: Config): void {
+  /** 本次装配的作用域标识:同一宿主服务实例上多作用域共存时据此各自记账与注销 */
+  const scope = Symbol('system-monitor')
   const watcher = new ChildSpawnWatcher()
   const resolver = new OwnerResolver(readProcessEnviron, process.pid)
   // 轮询间隔在进入采集器前收敛到合规区间:配置 schema 已限界,这里再兜底一次,
@@ -160,15 +195,26 @@ export function setup(ctx: Context, config: Config): void {
   // 宿主经 systemd 瞬态 scope 派生时直接子进程(以及无 systemd 时的内部 runner)环境里没有会话标识,
   // 该中间层只有派生锚点认得出来,故这里不再按平台关闭
   ctx.effect(() => {
-    hookSubprocess(ctx, watcher)
+    hookSubprocess(ctx, watcher, scope)
     const off = ctx.on('internal/service', (name) => {
-      if (name === 'subprocess') hookSubprocess(ctx, watcher)
+      if (name === 'subprocess') hookSubprocess(ctx, watcher, scope)
     })
     return () => {
       off()
-      unhookSubprocess()
+      unhookSubprocess(scope)
     }
   })
+
+  // 面板数据路由:webServer 现成则直接挂载,晚出现时由服务事件与每次轮询补挂;
+  // 展示选项由插件配置提供(设置页改动后经宿主重载插件生效,随下次轮询下发)
+  const panel = new MonitorPanel(collector, () => ({
+    laneNames: config.laneNames,
+    columns: config.columns,
+    cpuScope: config.cpuScope,
+    retainRounds: config.retainRounds,
+    laneColorPool: [...config.laneColorPool],
+    laneColorStrategy: config.laneColorStrategy,
+  }))
 
   // 轮询采集:激活即执行首轮,卸载时自动清理;每轮先刷新宿主侧归属信息
   ctx.effect(() => {
@@ -181,6 +227,15 @@ export function setup(ctx: Context, config: Config): void {
       } catch {
         // 单轮归属信息不可用:保持上一轮结果继续采集
       }
+      /*
+       * 路由挂载在这里重试:attach 命中同一实例时直接返回,代价只有一次 ctx.get;
+       * 只靠服务事件的话,webServer 现成而注册抛错时再也没有重挂入口,端点会一直 404
+       */
+      try {
+        panel.attach(ctx)
+      } catch {
+        // 挂载异常不影响采集与上报
+      }
       void collector.poll()
     }
     const timer = setInterval(tick, collector.pollInterval)
@@ -190,16 +245,6 @@ export function setup(ctx: Context, config: Config): void {
 
   registerReporter(ctx, collector)
 
-  // 面板数据路由:webServer 现成则直接挂载,晚出现时补挂;
-  // 展示选项由插件配置提供(设置页改动后经宿主重载插件生效,随下次轮询下发)
-  const panel = new MonitorPanel(collector, () => ({
-    laneNames: config.laneNames,
-    columns: config.columns,
-    cpuScope: config.cpuScope,
-    retainRounds: config.retainRounds,
-    laneColorPool: [...config.laneColorPool],
-    laneColorStrategy: config.laneColorStrategy,
-  }))
   ctx.effect(() => {
     panel.attach(ctx)
     const off = ctx.on('internal/service', (name) => {
