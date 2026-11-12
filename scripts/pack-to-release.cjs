@@ -3,6 +3,7 @@
  *
  * 由 package.json 的 postpack 钩子调用;构建产物与 tarball 统一
  * 存放于 release/(发布物隔离,目录已被 .gitignore 忽略)。
+ * pack --pack-destination 已把 tarball 直接写进 release/ 时视为成功。
  * 作者:JularDepick
  */
 
@@ -37,6 +38,11 @@ for (const entry of fs.readdirSync(rootDir)) {
   console.log(`postpack: ${entry} -> release/`)
 }
 if (moved === 0) {
+  // pack --pack-destination 直接写进 release/ 时,归位无事可做,不判失败
+  if (fs.existsSync(path.join(releaseDir, expected))) {
+    console.log(`postpack: ${expected} 已直接落在 release/,无需归位`)
+    process.exit(0)
+  }
   // 归位失败属打包链路故障(常见原因:版本号漏改导致包名与预期不一致),
   // 必须以非 0 退出让打包失败可见,否则 release/ 空着也算「成功」
   console.error(`postpack: 未找到本次产物 ${expected}, release/ 未更新`)

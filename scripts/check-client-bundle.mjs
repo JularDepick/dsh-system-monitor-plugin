@@ -5,7 +5,7 @@
  * 结构一旦走样(前奏落到脚本顶层、footer 不闭合、require 集合超出宿主平台模块表)
  * 在浏览器端表现为插件加载失败或全局变量污染,本地却很难察觉,故在 check 里断言:
  *   1. 顶层只有 load 调用,CJS 前奏在 factory 体内,footer 与 banner 配平;
- *   2. require 的包名是宿主平台模块表的子集;
+ *   2. require 的包名是宿主平台模块表的子集,且该表与 tsdown 的 PLATFORM_EXTERNALS 同值;
  *   3. 在无 module/exports 的沙箱里执行后,页面全局不新增 module/exports,导出含 name/inject/apply。
  * 断言按「报错即失败」处理:模块作用域抛错、缺产物字段都算失败(只提示会让崩溃产物过门禁)。
  * dist/client.js 不存在时(未构建)跳过并提示,不视为失败。
@@ -67,12 +67,27 @@ if (!existsSync(file)) {
     if (!PLATFORM_MODULES.includes(name)) failures.push('require 了平台模块表之外的包: ' + name)
   }
 
+  // 2b. 外部化清单与 tsdown 配置必须同值(两份清单分开维护,漏改会让白名单静默放宽)
+  if (existsSync('tsdown.config.ts')) {
+    const block = /const PLATFORM_EXTERNALS = \[([\s\S]*?)\]/.exec(readFileSync('tsdown.config.ts', 'utf8'))
+    if (block === null) {
+      failures.push('tsdown.config.ts 未找到 PLATFORM_EXTERNALS 清单')
+    } else {
+      const fromConfig = [...new Set([...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]))].sort()
+      if (fromConfig.join(',') !== [...PLATFORM_MODULES].sort().join(',')) {
+        failures.push('平台模块表与 PLATFORM_EXTERNALS 不一致: [' + fromConfig.join(', ') + '] vs [' + [...PLATFORM_MODULES].sort().join(', ') + ']')
+      }
+    }
+  }
+
   // 3. 沙箱执行:不得泄漏 module/exports 到页面全局,导出需带入口字段
   const sandbox = { window: {} }
   sandbox.window.__ModuleLoader__ = {
     load: (definition) => {
       sandbox.__loaded = definition
-      return definition.factory(() => ({}))
+      // 工厂只跑一次:带副作用的 bundle 重复执行会掩盖首次执行的真实结果
+      sandbox.__exports = definition.factory(() => ({}))
+      return sandbox.__exports
     },
   }
   const context = createContext(sandbox)
@@ -84,7 +99,7 @@ if (!existsSync(file)) {
   const loaded = sandbox.__loaded
   if (loaded === undefined) failures.push('__ModuleLoader__.load 未被调用')
   else {
-    const exported = loaded.factory(() => ({}))
+    const exported = sandbox.__exports
     for (const field of ['name', 'inject', 'apply']) {
       if (exported === undefined || exported[field] === undefined) failures.push('客户端导出缺少 ' + field)
     }

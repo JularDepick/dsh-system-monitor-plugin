@@ -5,11 +5,19 @@
  * 刻意不挂在 prepack:早于构建删除会把上一份可用产物一并丢掉,
  * 构建或打包失败时就没有可回退的包;也只删本包的 tgz,
  * release/ 里其它文件(校验和、说明等)不受影响。
+ * publish 路径同样跳过:那时 tarball 由包管理器在临时目录生成,本脚本
+ * 删掉的旧产物不会被新的补上,release/ 会空着。
  * 作者:JularDepick
  */
 
 const fs = require('node:fs')
 const path = require('node:path')
+
+// publish 不经过仓库根目录产出 tarball,此时清理只会删掉上一份可用产物
+if (process.env.npm_command === 'publish') {
+  console.log('clean-release: publish 不在仓库根产出 tarball,跳过清理')
+  process.exit(0)
+}
 
 const rootDir = path.join(__dirname, '..')
 const releaseDir = path.join(rootDir, 'release')

@@ -4,7 +4,9 @@
  * 用 TypeScript 编译器 API 的 transpileModule 只做语法/词法解析并报告语法诊断,
  * 不做类型解析、不读 tsconfig、不解析 import(target)。
  * 覆盖 src/ 下全部 .ts/.tsx、脚本目录下的 .mjs/.cjs、根目录的 tsdown.config.ts,
- * 以及 package.json/tsconfig.json 的 JSON 解析与翻译文件的结构与一致性检查。
+ * 以及 package.json/tsconfig.json 的 JSON 解析、打包面一致性(入口路径、版本号、
+ * engines.dsh 与 dsh 前缀 peer 同值、patch 引用、files 白名单)与翻译文件的
+ * 结构与一致性检查。
  *
  * 翻译检查是规范里提到的「本地检查」的落地点,覆盖:
  * 目录扫描发现全部 ini、[meta] 四键与版本号/语言/时间格式、重复键、
@@ -14,7 +16,7 @@
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
-import { join, extname, resolve, dirname, basename } from 'node:path'
+import { join, extname, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
@@ -89,6 +91,83 @@ for (const file of ['package.json', 'tsconfig.json']) {
     checked += 1
   } catch (error) {
     failures.push(file + '  JSON 解析失败: ' + error.message)
+  }
+}
+
+// manifest 与实装一致性: 入口路径, 版本号, 兼容区间, 依赖分区与 patch 引用
+{
+  const pkg = manifests['package.json']
+  if (pkg === undefined) {
+    failures.push('package.json  缺失或无法解析, 打包面校验跳过')
+  } else {
+    checked += 1
+    const exportsField = pkg.exports ?? {}
+    const clientExport = exportsField['./client']
+    const clientFile = typeof clientExport === 'string' ? clientExport : clientExport?.default
+    const patchPath = pkg.dsh?.bundle?.patch
+    if (typeof patchPath !== 'string') {
+      failures.push('package.json  dsh.bundle.patch 缺失')
+    } else if (!existsSync(join(root, patchPath))) {
+      failures.push('package.json  dsh.bundle.patch 指向的文件不存在: ' + patchPath)
+    } else if (!readFileSync(join(root, patchPath), 'utf8').includes('name: ' + pkg.name)) {
+      failures.push(patchPath + '  未以包名 ' + pkg.name + ' 插入插件行')
+    }
+    // 宿主只组合 platform 为 web 的 dsh.client 声明, 写错等于客户端半身不加载
+    if (pkg.dsh?.client?.platform !== 'web') {
+      failures.push('package.json  dsh.client.platform 应为 web')
+    }
+    // 依赖分区: 同一包不得既进 dependencies 又进 peer, dsh 前缀包由宿主提供, 只能作 peer
+    const deps = pkg.dependencies ?? {}
+    const peers = pkg.peerDependencies ?? {}
+    for (const depName of Object.keys(deps)) {
+      if (Object.hasOwn(peers, depName)) failures.push('package.json  ' + depName + ' 同时出现在 dependencies 与 peerDependencies')
+      if (depName === '@deepseek-ai/dsh' || depName.startsWith('@deepseek-ai/dsh-')) {
+        failures.push('package.json  ' + depName + ' 属宿主提供的 dsh 包, 应为 peer + dev 而非 dependencies')
+      }
+    }
+    // engines.dsh 与 dsh 前缀 peer 必须同值: 任一处漏改都会让兼容性判定口径分裂
+    const enginesDsh = pkg.engines?.dsh
+    const peerDsh = pkg.peerDependencies?.['@deepseek-ai/dsh-tools']
+    if (typeof enginesDsh !== 'string' || enginesDsh !== peerDsh) {
+      failures.push('package.json  engines.dsh [' + String(enginesDsh) + '] 与 @deepseek-ai/dsh-tools 的 peer [' + String(peerDsh) + '] 不同值')
+    }
+    // 面板页脚的版本号取常量, 必须与 manifest 同值
+    const constantText = readUtf8('src/constants.ts')
+    const pluginVersion = constantText === null ? null : /export const PLUGIN_VERSION = '([^']+)'/.exec(constantText)
+    if (pluginVersion === null) failures.push('src/constants.ts  未找到 PLUGIN_VERSION')
+    else if (pluginVersion[1] !== pkg.version) {
+      failures.push('src/constants.ts  PLUGIN_VERSION=' + pluginVersion[1] + ' 与 package.json 的 ' + String(pkg.version) + ' 不一致')
+    }
+    // 入口与 files 白名单要有实体; dist/ 不存在(未构建)时跳过, 与 check-client-bundle 同口径
+    if (!existsSync(join(root, 'dist'))) {
+      console.log('打包面校验: 未找到 dist/(先构建再校验), 入口与 files 白名单本次跳过')
+    } else {
+      const entries = [
+        ['main', pkg.main],
+        ['types', pkg.types],
+        ['exports["."].types', exportsField['.']?.types],
+        ['exports["."].default', exportsField['.']?.default],
+        ['exports["./client"].default', clientFile],
+      ]
+      for (const [label, entry] of entries) {
+        if (typeof entry !== 'string') failures.push('package.json  ' + label + ' 缺失')
+        else if (!existsSync(join(root, entry))) failures.push('package.json  ' + label + ' 指向的文件不存在: ' + entry)
+      }
+      for (const item of pkg.files ?? []) {
+        if (!item.includes('*')) {
+          if (!existsSync(join(root, item))) failures.push('package.json  files 项不存在: ' + item)
+          continue
+        }
+        const star = item.indexOf('*')
+        const prefix = item.slice(0, star)
+        const slash = prefix.lastIndexOf('/')
+        const dir = join(root, slash < 0 ? '.' : prefix.slice(0, slash))
+        const namePrefix = slash < 0 ? prefix : prefix.slice(slash + 1)
+        const suffix = item.slice(star + 1)
+        const hit = existsSync(dir) && readdirSync(dir).some((name) => name.startsWith(namePrefix) && name.endsWith(suffix))
+        if (!hit) failures.push('package.json  files 项无匹配文件: ' + item)
+      }
+    }
   }
 }
 
