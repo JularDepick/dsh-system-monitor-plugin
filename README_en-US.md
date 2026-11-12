@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.3.2-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.2)
+[![Version](https://img.shields.io/badge/Version-0.3.3-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.3)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -12,7 +12,7 @@ English | [简体中文](./README.md)
 
 A plugin for dsh: monitor the resource utilization of dsh processes and their spawned children, and report the results in panel charts
 
-Supports dsh 0.2.1-rc.1 through 0.2.2-rc.1
+Supports dsh 0.2.1-rc.1 through 0.2.2-rc.2
 
 ---
 
@@ -23,17 +23,19 @@ Supports dsh 0.2.1-rc.1 through 0.2.2-rc.1
 - Container quota basis: percentages are computed against the CPU and memory quota of the running environment itself (falling back to the visible totals when no quota is readable), so readings inside a container are not diluted by host totals
 - Session attribution: processes are attributed to sessions through terminal mapping, explicit reporting, session environment variables and the child processes spawned by commands run in a session; the subprocess-entry source is active on every platform (on Windows and macOS, which cannot read process environments, it is the primary source; on Linux and WSL it identifies the intermediate layer of the systemd transient scope while the process environment fills in the rest of the chain), and the panel presents them across four dimensions: this session / all processes / sessions / subagents
 - Standalone palette: the panel uses its own blue-and-white palette (light and dark variants); share bars and table swatches are colored by role, with a fixed semantic color for the main process and host, the subagent total, other applications and idle
-- Lane color pool: ordinary processes and sessions take pool colors in order, and the pool can be added to, edited or trimmed in the plugin config and in the panel settings sub-page (16 colors by default, limited to 10 to 64); when there are more members than pool colors the lane color strategy decides, recycling existing colors (default) or auto-inserting the midpoint between two neighbouring colors (the result is written into the browser-side local preference)
+- Lane color pool: ordinary processes and sessions take pool colors in order, and the pool can be added to, edited or trimmed in the plugin config and in the panel settings sub-page (16 colors by default, limited to 10 to 64); when there are more members than pool colors the lane color strategy decides, recycling existing colors (default) or auto-inserting the midpoint between two neighbouring colors (colors added this way and the next candidate cursor are kept in panel memory only, and replay from the same data after a refresh)
 - Handle reporting: a reporting tool allows the Agent to report process handles (e.g. subagent processes) that the plugin cannot identify on its own
-- Status and diagnostics: the panel reports one of three states (normal / degraded / data source unavailable; degradation has three causes - the query source fell back to a secondary command, some processes could be listed but not read (insufficient permissions) (making readings run slightly high), or the round sampled nothing / missed the dsh root process), and the system info row lists the sampling time, platform, poll interval, logical processors, total memory, the container quota when present, the dsh process identity and the other-application process count, plus the unreadable process count when any process could not be read; CPU or memory values at or above 90% are highlighted
+- Status and diagnostics: the panel reports one of three states (normal / degraded / data source unavailable; degradation has three causes - the query source fell back to a secondary command, some processes could be listed but not read (insufficient permissions), which makes the idle reading run slightly high, or the round sampled nothing / missed the dsh root process), and the system info row lists the sampling time, platform, poll interval, logical processors, total memory, the container quota when present, the dsh process identity and the other-application process count, plus the unreadable process count when any process could not be read; CPU or memory values at or above 90% are highlighted
 - Panel-only display: monitoring data is shown on the plugin UI panel only and is not exposed to dsh
 
 
 ## Installation
 
-This release supports dsh 0.2.1-rc.1 through 0.2.2-rc.1: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and dsh 0.2.0-rc.2 or newer but outside that set is refused at installation and at startup; dsh older than 0.2.0-rc.2 has no compatibility gate and is not supported
+This release supports dsh 0.2.1-rc.1 through 0.2.2-rc.2: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and dsh 0.2.0-rc.2 or newer but outside that set is refused at installation and at startup; dsh older than 0.2.0-rc.2 has no compatibility gate and is not supported
 
 This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical
+
+Runtime requirement: Node.js 20 or newer (the `engines.node` field in `package.json`)
 
 Supported operating systems: Windows, Linux (including WSL) and macOS; other Unix-like platforms (the BSD variants, Solaris, AIX) reuse the macOS ps chain. Windows and Linux (including WSL) are covered by real-machine testing; macOS and the other platforms implement the same parsing rules but have not been verified on each platform
 
@@ -48,7 +50,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 When distributing a tarball:
 
 ```sh
-dsh plugin --profile <name> add dsh-system-monitor-plugin-0.3.2.tgz
+dsh plugin --profile <name> add ./dsh-system-monitor-plugin-0.3.3.tgz
 ```
 
 
@@ -62,7 +64,7 @@ Detail tables can be sorted by CPU, memory or name, and the optional columns (PI
 
 The "Settings" button at the top right of the panel opens an in-panel settings sub-page to toggle in-lane names, switch the CPU scope (whole machine / single core), the view columns (single / two-column), the table sort (default / CPU / memory / name) and the visible columns (per-column toggles), adjust the row retention rounds, switch the lane color strategy (recycle existing / auto-insert midpoints) and add, edit or remove lane pool colors, and to copy the current snapshot as text; settings and collapse states are kept in browser-side local preferences; card folding and the settings sub-page are both keyboard operable (ESC closes the sub-page)
 
-Process handles that need to be monitored are reported by the Agent through the reporting tool during a session; repeated handles are merged by process id, a single call carries at most 256 handles, names and session ids are limited to 120 and 200 characters, and anything beyond those limits is counted as rejected in the receipt
+Process handles that need to be monitored are reported by the Agent through the reporting tool during a session; repeated handles are merged by process id, a single call carries at most 256 handles, names and session ids are limited to 120 and 200 characters; handles beyond the per-call limit are not counted as rejected but reported by their real count in the receipt message, while only handles that fail per-item validation land in the receipt rejection list
 
 The handle fields of the reporting mechanism (identity, parent process, process name, session id, and the like) and the deduplication rules are documented in the reporting tool's parameter description inside the plugin
 
@@ -87,7 +89,7 @@ dsh-system-monitor-plugin/
 ├── tsdown.config.ts    # build configuration
 ├── version.index.md    # version index
 ├── docs/               # project docs (official plugin dev docs, dsh web tab guide, tech specs, tag and release spec)
-├── scripts/            # helper scripts (syntax check, post-pack cleanup and move)
+├── scripts/            # helper scripts (syntax check, client bundle check, post-pack cleanup and move, official docs check)
 └── src/                # project source (entry, config, constants, client, monitor, translation)
 ```
 

@@ -13,7 +13,7 @@ export const PLUGIN_NAME = 'dsh-system-monitor-plugin'
  * 插件版本号(面板页脚展示)。
  * 必须与 package.json 的 version 同步,迭代版本号时一并更新(见 version.index.md)。
  */
-export const PLUGIN_VERSION = '0.3.2'
+export const PLUGIN_VERSION = '0.3.3'
 
 /** 资源采集轮询间隔默认值(毫秒) */
 export const DEFAULT_POLL_INTERVAL = 1000
@@ -331,7 +331,6 @@ export const MAX_LANE_COLOR_POOL_SIZE = 64
 /** 泳道颜色取色方案取值;默认循环复用(不新增颜色) */
 export const LANE_COLOR_STRATEGIES = ['cycle', 'midpoint'] as const
 export const DEFAULT_LANE_COLOR_STRATEGY = 'cycle'
-
 
 /** 占比条整体外边框宽度(像素):2px,明暗主题下都清晰可辨 */
 export const PANEL_SHARE_BAR_BORDER_WIDTH = 2

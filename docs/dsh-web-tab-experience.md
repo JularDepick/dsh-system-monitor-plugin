@@ -2,7 +2,7 @@
 
 > 面向 dsh 插件开发者:总结外部插件为 dsh Web GUI 贡献 UI(尤其是新增 tab 页)的完整机制与落地要点
 > 以会话区域「对话/轨迹」视图标签栏新增 tab 为实例,同样适用于「设置-插件」页等其他挂载点
-> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对,已按 0.1.5-rc.1,0.1.7-rc.2 与 0.2.0-rc.2 发布包复核更新(平台模块表,槽 owner props,槽锚点与视图容器样式,客户端发现机制),并按 0.2.1-rc.1 至 0.2.1-rc.5 发布包复核平台模块表,槽契约与标准 props 来源(0.2.1-rc.2 与 0.2.1-rc.1 的相关包逐字节一致;0.2.1-rc.3 的平台模块表与 0.2.1-rc.2 逐项一致;0.2.1-rc.4 与 0.2.1-rc.5 的 `@deepseek-ai/dsh-web-frontend` 发布包与 0.2.1-rc.3 相比 92 个文件逐一哈希相同,仅 `package.json` 的版本字段不同,平台模块表因此逐项一致;0.2.1-rc.3 至 0.2.1-rc.5 的 `dsh-tools`,`dsh-client-ui-primitives`,`dsh-client-ui-renderer` 与 `dsh-client-ui-slots` 仅版本字段不同,`dsh-client-ui-conversation` 只有 README,类型声明与打包产物变化而 `exports` 一致;视图容器样式未逐项复测);本经验为静态总结,换版本时以对应发布包类型声明为准
+> 机制基于官方仓库源码(见文末索引)与 0.1.1-rc.2 发布包核对,已按 0.1.5-rc.1,0.1.7-rc.2 与 0.2.0-rc.2 发布包复核更新(平台模块表,槽 owner props,槽锚点与视图容器样式,客户端发现机制),并按 0.2.1-rc.1 至 0.2.1-rc.5 发布包复核平台模块表,槽契约与标准 props 来源(0.2.2-rc.1 另行复核平台模块表,槽契约与标准 props 来源未逐项复测;0.2.1-rc.2 与 0.2.1-rc.1 的相关包逐字节一致;0.2.1-rc.3 的平台模块表与 0.2.1-rc.2 逐项一致;0.2.1-rc.4 与 0.2.1-rc.5 的 `@deepseek-ai/dsh-web-frontend` 发布包与 0.2.1-rc.3 相比 92 个文件逐一哈希相同,仅 `package.json` 的版本字段不同,平台模块表因此逐项一致;0.2.1-rc.3 至 0.2.1-rc.5 的 `dsh-tools`,`dsh-client-ui-primitives`,`dsh-client-ui-renderer` 与 `dsh-client-ui-slots` 仅版本字段不同,`dsh-client-ui-conversation` 只有 README,类型声明与打包产物变化而 `exports` 一致;视图容器样式未逐项复测;0.2.2-rc.2 按发布包复核平台模块表仍为同一份十一项,`conversation.view` 槽契约与标准 props 来源未变,`StateDot`,`Switch`,`SegmentedControl`,`Button` 与 chevron 及关闭图标的声明未变,另新增会话头 More actions 按钮与 `contextMenu.button` 槽(宿主界面几何略变,插件代码不受影响));本经验为静态总结,换版本时以对应发布包类型声明为准
 
 ## 一,总体流程(五个步骤)
 
@@ -68,7 +68,7 @@ ctx.slots.inject('conversation.view', () => ctx.slots.register({
 | define | `process.env.NODE_ENV` 与 `import.meta.env.MODE`(zustand 等内联库需要) |
 | CSS Modules | 自定义插件:lightningcss 编译 `.module.css` 为 hashed classMap + 注入 `<style data-plugin>`(tsdown 自带 css 管线不处理,需虚拟 id 包装,后缀不能是 `.css`) |
 
-平台模块表(宿主冻结模块表中的 seed 词,取发布包 `@deepseek-ai/dsh-web-frontend` 前端产物中的 `PLATFORM_MODULES` 表;下面按 0.2.1-rc.1 至 0.2.2-rc.1 列出(0.2.1-rc.1 至 rc.5 五版逐项一致,rc.4 与 rc.5 的前端产物与 rc.3 逐一哈希相同;0.2.2-rc.1 的前端产物重新核对,seed 表仍为同一份十项),0.2.0-rc.2 及更早版本为同一表去掉 `zod` 与 `@tanstack/react-virtual` 两项):
+平台模块表(宿主冻结模块表中的 seed 词,取发布包 `@deepseek-ai/dsh-web-frontend` 前端产物中的 `PLATFORM_MODULES` 表;下面按 0.2.1-rc.1 至 0.2.2-rc.2 列出(0.2.1-rc.1 至 rc.5 五版逐项一致,rc.4 与 rc.5 的前端产物与 rc.3 逐一哈希相同;0.2.2-rc.1 与 0.2.2-rc.2 的前端产物重新核对,seed 表仍为同一份十一项),0.2.0-rc.2 及更早版本为同一表去掉 `zod` 与 `@tanstack/react-virtual` 两项):
 
 ```
 react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
@@ -77,7 +77,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 @deepseek-ai/dsh-client-ui-dockkit
 ```
 
-> 0.2.1-rc.1 相比 0.2.0-rc.2 新增 `zod` 与 `@tanstack/react-virtual`(0.2.1-rc.2 至 0.2.2-rc.1 该表均与 0.2.1-rc.1 一致);0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须是该表的子集(只列本插件真正 value-import 的包),多余外部化会在浏览器端解析失败,写成子集才能在 0.2.1-rc.1 至 0.2.1-rc.5 上通用;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`);0.2.2-rc.1 起该库的图标改为引用宿主的 symbol sprite(`<use href="#dsw-icon-…">`),sprite 由宿主前端在同一文档内挂载,故面板里的 chevron 与关闭图标仍能渲染,但不能再假定图标自带内联图形
+> 0.2.1-rc.1 相比 0.2.0-rc.2 新增 `zod` 与 `@tanstack/react-virtual`(0.2.1-rc.2 至 0.2.2-rc.2 该表均与 0.2.1-rc.1 一致);0.2.0-rc.2 相比 0.1.7-rc.2 该表未变(0.1.7-rc.2 相比 0.1.5-rc.1 亦未变;0.1.5-rc.1 相比 0.1.1-rc.2 的变更为:`@deepseek-ai/dsh-client-store`,`@deepseek-ai/dsh-client-ui-dockkit` 新增;`@deepseek-ai/dsh-client-web-react`,`@deepseek-ai/dsh-client-ui-attachment`,`@deepseek-ai/dsh-client-schema-form` 移除);外部插件的 tsdown 外部化清单必须是该表的子集(只列本插件真正 value-import 的包),多余外部化会在浏览器端解析失败,写成子集才能在 0.2.1-rc.1 至 0.2.2-rc.2 上通用;`@deepseek-ai/dsh-client-ui-primitives` 在表中,可继续 value-import(如 `StateDot`);0.2.2-rc.1 起该库的图标改为引用宿主的 symbol sprite(`<use href="#dsw-icon-…">`),sprite 由宿主前端在同一文档内挂载,故面板里的 chevron 与关闭图标仍能渲染,但不能再假定图标自带内联图形
 
 ### 2. 跨插件协作纪律(构建期 purity 门强制)
 
@@ -116,16 +116,17 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 4. **CSS Modules 需要 lightningcss**:tsdown 不内置该管线,官方用自定义插件(虚拟 id + lightningcss transform);不想要 CSS 文件时可用内联样式规避
 5. **样式纪律**:使用 `--dsw-alias-*` 语义 token,不写死颜色;产品文案用界面语言;表格/select 文本居中;不用浏览器原生弹窗
 6. **pnpm 无 TTY 会 abort**:package.json 描述符变更后需 `CI=true pnpm install`;typecheck/build 也建议 `CI=true` 前缀
-7. **文案跟随界面语言必须走宿主 locale 服务**:按 `navigator.language` 判定只跟浏览器语言走,与 dsh 界面语言不一致(用户在设置页切换语言时插件文案不跟着变);正确做法:字典以命名空间注册(`ctx.locale.register(ns, { zh, en })`,内置语言 id 只有 `zh`/`en`),并在槽注册时声明 `locale: ns`,框架据此向组件注入译文函数,语言切换时重建该座位;`label` 用 `ctx.locale.bind(ns)` 的 thunk 即可跟随语言;声明了 `locale` 却不注册字典会在渲染期响亮失败;`ctx.locale` 的类型家在 `@deepseek-ai/dsh-client-locale`(只承载类型,不必作为运行时依赖)
+7. **文案跟随界面语言必须走宿主 locale 服务**:按 `navigator.language` 判定只跟浏览器语言走,与 dsh 界面语言不一致(用户在设置页切换语言时插件文案不跟着变);正确做法:字典以命名空间注册(`ctx.locale.register(ns, { zh, en })`,类型化注册要求 `zh` 与 `en` 两套齐全;宿主自 dsh 0.2.2-rc.1 起另内置 `de`,`es`,`fr`,`ja`,`pt`,`ru`,未注册的语言由宿主回退链取用),并在槽注册时声明 `locale: ns`,框架据此向组件注入译文函数,语言切换时重建该座位;`label` 用 `ctx.locale.bind(ns)` 的 thunk 即可跟随语言;声明了 `locale` 却不注册字典会在渲染期响亮失败;`ctx.locale` 的类型家在 `@deepseek-ai/dsh-client-locale`(只承载类型,不必作为运行时依赖)
 8. **注册的 inline 行高必须带单位**:React 内联样式的 `lineHeight` 属无单位属性,数值会被原样输出为"倍数 × font-size"(`lineHeight: 20` 在 13px 字号下是 260px),组件会因此被撑出大片空白;写 `'20px'` 这类带单位字符串;复刻渲染台验证时也要保持同一数值语义,否则渲染台"通过"而真实页面崩坏
 9. **数据端点返回 200 不等于有数据**:自定义数据路由在"暂无数据"时若返回 200 + 占位结构,客户端必须按字段是否有效判定(如采样时刻为 0),否则会把占位值当真实数据渲染
 10. **注入面板的无障碍要自己补齐**:宿主不会替你补键盘与读屏语义,实测有效的做法:折叠开关用原生 `<button>` 并带 `aria-expanded`;面板内子页(替换式配置页)加 `role="region"` 与名称,入口按钮带 `aria-expanded` 与 `aria-controls`,展开时把焦点移入子页(`tabIndex={-1}` + `focus()`),收起时(含 ESC)把焦点还给入口按钮,否则焦点会落在已卸载的节点上;状态类信息另给一个 `role="status"` + `aria-live="polite"` 的仅读屏文本(用 `clip-path: inset(50%)` 之类做视觉隐藏,不要用 `display:none`);纯装饰的色块与图标加 `aria-hidden`;错误提示卡用 `role="alert"`;表头用 `<th scope="col">`;加载态若用动画(本项目已改为静态状态文本)需在 `prefers-reduced-motion: reduce` 下关闭
 11. **列可隐藏时表头与行单元必须同源取舍**:动态列宽的表格用 `colgroup` 定列,隐藏某一列时若只改表头不改行单元(或反之),列数错位会直接错行;把可隐藏列抽成一份清单,表头构造与行构造都按同一份清单取舍,跨列表头(如"内存"占两列)的 `colSpan` 也要随之在 1 与 2 之间切换
 12. **配色要按宿主真实取值挑 token,不能按名字猜**:宿主主题样式是 `body{…}`(浅色)与 `body[data-ds-dark-theme]{…}`(深色)两套声明,把 token 解析成具体颜色后再选,能避开几个必然踩到的坑 —— `--dsw-alias-bg-layer-1/2/3` 在浅色主题下**同为 `#fff`**(拿它当卡片面等于没有层次,卡片面应取 `--dsw-alias-bg-module-platform`),`--dsw-alias-brand-primary` 在本设计系统里是**黑白**(浅 `#0f1115` / 深 `#f9fafb`,当强调色会与正文同色,强调色应取 `--dsw-alias-state-business-primary`),`--dsw-alias-border-l1` 浅色主题只有 4% 黑(1px 描边肉眼近乎不可见,描边从二级起用),`--dsw-alias-label-caption` 压在浅灰面上对比度不足 3(压在灰面上的文字用三级或次档);另外深色主题的相邻面色容易过近(如 `scrollbar-bg-l1` `#3c3c3d` 与卡片面 `#353638` 只差 0.008 亮度),深色下要挑开一档(`scrollbar-bg-l2` `#545557`);建议把「面色台阶单调 + 关键文字/描边对比度达标」写成脚本按真实取值逐项断言,比肉眼可靠
+13. **0.2.2-rc.2 起发布包自带源码与源映射**:该版本起每个包在 `lib` 之外额外发布 `src`(原始 TypeScript)与 `*.js.map`/`*.d.ts.map`,主包 `@deepseek-ai/dsh` 的解包体积因此从数十 KB 涨到 MB 级(前端包 `@deepseek-ai/dsh-web-frontend` 更明显);核对宿主行为时可直接读 `node_modules/@deepseek-ai/<包>/src` 的源码,不必再从压缩产物反推,但仍以运行时实际装载的 `lib` 产物为准(两者可能因构建期转换而不同)
 
 ## 五,参考文件索引(官方仓库)
 
-> 路径指向所示时期的仓库快照(本经验已按 dsh-v0.1.5-rc.1 复核 platform.ts 与 ui-trajectory 注册范例仍有效;0.1.7-rc.2 与 0.2.0-rc.2 按发布包前端产物与 `.d.ts` 类型声明复核平台模块表,槽契约,槽锚点与视图容器样式,0.2.1-rc.1 至 0.2.1-rc.5 复核平台模块表与槽契约);判断最新行为以官方仓库现况为准
+> 路径指向所示时期的仓库快照(本经验已按 dsh-v0.1.5-rc.1 复核 platform.ts 与 ui-trajectory 注册范例仍有效;0.1.7-rc.2 与 0.2.0-rc.2 按发布包前端产物与 `.d.ts` 类型声明复核平台模块表,槽契约,槽锚点与视图容器样式,0.2.1-rc.1 至 0.2.2-rc.2 复核平台模块表与槽契约);判断最新行为以官方仓库现况为准
 
 | 文件 | 用途 |
 |:---:|:---:|
