@@ -14,7 +14,7 @@ import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { cpus, freemem, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { INSTANCE_TOKEN_TOLERANCE_MS, LINUX_CLK_TCK, QUERY_TIMEOUT_MS } from '../constants'
+import { INSTANCE_TOKEN_TOLERANCE_MS, LINUX_CLK_TCK, QUERY_TIMEOUT_MS, REPORTED_HANDLE_GRACE_ROUNDS } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
 
 import { readCgroupLimits } from './cgroup'
@@ -511,6 +511,28 @@ export function resolvePlatformLabel(): string {
   return process.platform
 }
 
+/**
+ * 系统报告的空闲内存(字节)。
+ * Linux 的 os.freemem() 取 sysinfo.freeram(不含可回收页缓存),把它当「空闲」会让
+ * 「其他应用」把内核页缓存一并算进去,空闲读数因此远小于实际可回收量;
+ * 故 Linux 优先读 /proc/meminfo 的 MemAvailable(含可回收量),读不到再退回 os.freemem()。
+ */
+function availableMemoryBytes(): number {
+  if (process.platform === 'linux') {
+    try {
+      const meminfo = readFileSync('/proc/meminfo', 'utf8')
+      const match = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo)
+      if (match !== null) {
+        const bytes = Number(match[1]) * 1024
+        if (Number.isFinite(bytes) && bytes >= 0) return bytes
+      }
+    } catch {
+      // /proc/meminfo 不可读:退回 os.freemem()
+    }
+  }
+  return freemem()
+}
+
 /** 进程资源采集器 */
 export class ProcessCollector {
   /** 逻辑处理器数量(至少按 1 计,避免空列表导致 CPU 百分比成为非数) */
@@ -541,6 +563,12 @@ export class ProcessCollector {
   private readonly reported = new Map<number, ProcessHandle>()
   /** 汇报句柄绑定的实例令牌(pid → 令牌;令牌变化即作废该句柄,避免 pid 复用后沿用旧名称) */
   private readonly reportedTokens = new Map<number, string>()
+  /**
+   * 汇报句柄本轮未能从平台枚举中读到的连续轮数(pid → 次数)。
+   * 单轮读不到就丢会让一次权限不足或降级查询把句柄永久丢掉(回执却已告知「已纳入监控」),
+   * 故宽限 `REPORTED_HANDLE_GRACE_ROUNDS` 轮,期间每轮重新尝试匹配。
+   */
+  private readonly reportedMisses = new Map<number, number>()
   /** 各进程实例的上一轮累计 CPU 时间(键见 `baselineKey`,秒) */
   private readonly lastCpu = new Map<string, number>()
   /**
@@ -551,6 +579,12 @@ export class ProcessCollector {
   private readonly instanceTokens = new Map<number, { token: string; baseMs: number }>()
   /** 最近一次采样时刻(epoch 毫秒) */
   private lastSampledAt = 0
+  /**
+   * 最近一次采样的单调时钟刻度(纳秒)。
+   * CPU 差分窗口长度取单调时钟:墙钟被回拨时窗口会变成负数(本轮读数归零且基准照样被覆盖,
+   * 那段增量就此丢失),休眠唤醒后又会被拉成小时级而把读数摊薄成 0。
+   */
+  private lastSampleMark: bigint | null = null
   /** 是否有采集轮询在执行中(查询慢于轮询间隔时跳过本轮,不并发重入) */
   private polling = false
   /** 首份快照就绪的兑现器(产出首份快照时置空) */
@@ -650,10 +684,18 @@ export class ProcessCollector {
      */
     for (const pid of [...this.reported.keys()]) {
       if (!byPid.has(pid)) {
-        this.reported.delete(pid)
-        this.reportedTokens.delete(pid)
+        // 本轮读不到:宽限未到就不丢,下一轮重新尝试匹配(读到即清零)
+        const misses = (this.reportedMisses.get(pid) ?? 0) + 1
+        if (misses < REPORTED_HANDLE_GRACE_ROUNDS) {
+          this.reportedMisses.set(pid, misses)
+        } else {
+          this.reported.delete(pid)
+          this.reportedTokens.delete(pid)
+          this.reportedMisses.delete(pid)
+        }
         continue
       }
+      this.reportedMisses.delete(pid)
       const record = byPid.get(pid) as ProcessRecord
       const token = record.instanceToken ?? this.instanceTokens.get(pid)?.token
       if (token === undefined) continue
@@ -662,6 +704,7 @@ export class ProcessCollector {
       else if (bound !== token) {
         this.reported.delete(pid)
         this.reportedTokens.delete(pid)
+        this.reportedMisses.delete(pid)
       }
     }
 
@@ -674,7 +717,9 @@ export class ProcessCollector {
 
     // CPU 差分:全量进程都算(中段样本用 dsh 集合,左端「其他应用」用其余进程合计)
     const now = Date.now()
-    const elapsed = this.lastSampledAt === 0 ? 0 : (now - this.lastSampledAt) / 1000
+    const mark = process.hrtime.bigint()
+    // 窗口长度取单调时钟,与墙钟跳变解耦(墙钟只用于展示采样时刻)
+    const elapsed = this.lastSampleMark === null ? 0 : Number(mark - this.lastSampleMark) / 1e9
     const cpuPercentByPid = new Map<number, number>()
     const aliveKeys = new Set<string>()
     for (const record of records) {
@@ -760,12 +805,13 @@ export class ProcessCollector {
       othersMemoryBytes = Math.min(othersMemoryBytes, this.memoryDenominator)
       idleMemoryBytes = Math.max(0, this.memoryDenominator - othersMemoryBytes - dshMemoryBytes)
     } else {
-      idleMemoryBytes = Math.max(0, Math.min(freemem(), this.memoryDenominator))
+      idleMemoryBytes = Math.max(0, Math.min(availableMemoryBytes(), this.memoryDenominator))
       othersMemoryBytes = Math.max(0, Math.min(this.memoryDenominator - idleMemoryBytes - dshMemoryBytes, this.memoryDenominator))
     }
     const othersMemoryPercent = memoryPercentOf(othersMemoryBytes)
     const idleMemoryPercent = memoryPercentOf(idleMemoryBytes)
     this.lastSampledAt = now
+    this.lastSampleMark = mark
 
     // 读到但无权读取的进程既不计入 dsh 集合,也不会计入「其他应用」,会使「空闲」偏高,
     // 故与查询链降级一并标注,由面板显示为采集降级
@@ -830,6 +876,7 @@ export class ProcessCollector {
       this.reported.set(handle.pid, handle)
       // 新上报的句柄重新绑定实例令牌:该 pid 若已换进程,以本次采样到的实例为准
       this.reportedTokens.delete(handle.pid)
+      this.reportedMisses.delete(handle.pid)
       this.onReported(handle)
     }
   }

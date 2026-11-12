@@ -64,8 +64,8 @@ export const REPORT_TOOL_NAME = 'system_monitor_report'
 export const QUERY_TIMEOUT_MS = 10000
 
 /**
- * 单次汇报的句柄条数上限:超出部分按拒绝处理(随回执返回原因),
- * 避免一次调用把任意多 pid 灌进采集集合而使快照体量线性膨胀
+ * 单次汇报的句柄条数上限:超出部分不进拒绝列表(那会让拒绝计数与真实丢弃条数不符),
+ * 而是在回执文案里给出真实条数;上限本身避免一次调用把任意多 pid 灌进采集集合而使快照体量线性膨胀
  */
 export const MAX_REPORTED_HANDLES = 256
 
@@ -74,6 +74,13 @@ export const MAX_HANDLE_NAME_LENGTH = 120
 
 /** 汇报句柄的会话标识长度上限(字符),超出按拒绝处理 */
 export const MAX_HANDLE_SESSION_ID_LENGTH = 200
+
+/**
+ * 汇报句柄在本轮采集中读不到时的宽限轮数。
+ * 单轮读不到(权限不足,查询降级,进程刚派生尚未在枚举结果里)就丢弃会让回执「已纳入监控」变成空话,
+ * 且该句柄不会再出现在面板上;宽限期内每轮重新尝试匹配,读得到即清零。
+ */
+export const REPORTED_HANDLE_GRACE_ROUNDS = 3
 
 /**
  * 会话标识环境变量名:宿主在每次模型 shell 调用时把它注入子进程环境(见宿主 shell-env 注册表)。

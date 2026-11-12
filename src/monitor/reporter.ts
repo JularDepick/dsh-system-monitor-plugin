@@ -101,12 +101,23 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
           : handle)
       }
       collector.mergeReported(accepted)
+      /*
+       * 本轮采集里暂时看不到的句柄要说清楚:平台枚举不到(无权读取,不在采集范围)时面板不会
+       * 显示该进程,只回「已纳入监控」会让模型以为它已经在监控中;采集器会宽限数轮重试匹配
+       */
+      const snapshot = collector.getSnapshot()
+      const unseen = snapshot === null
+        ? 0
+        : accepted.filter((handle) => !snapshot.processes.some((sample) => sample.handle.pid === handle.pid)).length
       const detail = rejected.length > 0 ? `;拒绝 ${rejected.length} 项` : ''
       const overflowDetail = overflow > 0 ? `;另有 ${overflow} 条超出单次上限 ${MAX_REPORTED_HANDLES} 条未纳入` : ''
+      const unseenDetail = unseen > 0
+        ? `;其中 ${unseen} 个暂未在本轮采集中出现(可能无权读取或不在本平台的采集范围内),后续轮次自动重试`
+        : ''
       const receipt: ReportReceipt = {
         accepted: accepted.length,
         rejected,
-        message: `已纳入监控 ${accepted.length} 个进程${detail}${overflowDetail}`,
+        message: `已纳入监控 ${accepted.length} 个进程${detail}${overflowDetail}${unseenDetail}`,
       }
       return JSON.stringify(receipt)
     },
