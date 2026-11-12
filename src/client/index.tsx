@@ -496,7 +496,7 @@ body[data-ds-dark-theme] .sm-root {
 `
 
 /**
- * 内容列:宿主视图区与滚动容器均无内边距(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致;0.2.1-rc.1 至 0.2.1-rc.5 的槽契约与平台模块表已复核一致),
+ * 内容列:宿主视图区与滚动容器均无内边距(0.2.0-rc.2 发布包核对,与 0.1.7-rc.2、0.1.5-rc.1 一致;0.2.1-rc.1 至 0.2.2-rc.2 的槽契约与平台模块表已复核一致),
  * 间距与滚动兜底须由组件自带。
  * 宽度取 tab 区域可用宽度(仅超宽屏按 PANEL_MAX_WIDTH 收窄),不再对齐宿主对话列宽,
  * 否则在宽 tab 区域内会留下大片左右空白。
@@ -1012,6 +1012,7 @@ function ShareLegend(props: { t: PanelTranslate; colors: readonly string[] }): R
       {items.map((item) => (
         <span key={item.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span
+            aria-hidden="true"
             style={{
               width: PANEL_SWATCH_SIZE,
               height: PANEL_SWATCH_SIZE,
@@ -1076,8 +1077,12 @@ function DimensionCard(props: {
     const table = tableRef.current
     if (table !== null) observer.observe(table)
     return () => observer.disconnect()
-    // 展开时才测量:折叠期间泳道与表格不在 DOM 中,重新展开需重新挂观察器
-  }, [props.open])
+    /*
+     * 展开时才测量:折叠期间泳道与表格不在 DOM 中,重新展开需重新挂观察器;
+     * 表格在无成员时不渲染,且它是被观察的 body 的兄弟节点,空态转为有成员时
+     * body 尺寸不变,观察器不会回调,故依赖里一并盯住空态
+     */
+  }, [props.open, props.groups.length === 0])
 
   const cpuTotal = props.groups.reduce((sum, group) => sum + group.cpuPercent, 0)
   const memoryTotal = props.groups.reduce((sum, group) => sum + group.memoryPercent, 0)
@@ -1342,8 +1347,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 本地偏好优先,其次插件配置(随数据端点下发),最后内置默认值;
    * 连续未采样达到该轮数即从列表移除该行(见下方留存逻辑)。
    * 声明位置需早于使用它的提交函数,故与其它偏好派生值放在一起。
+   * 载荷里的轮数一并按同一区间收敛:留存实例在渲染期创建,而构造器对非法轮数直接抛错,
+   * 一个越界载荷会把整个面板打空(配置 schema 正常时不会出现)。
    */
-  const retainRounds = preferences.retainRounds ?? snapshot?.panelOptions?.retainRounds ?? DEFAULT_RETAIN_ROUNDS
+  const retainRounds = preferences.retainRounds ?? normalizeRetainRounds(snapshot?.panelOptions?.retainRounds) ?? DEFAULT_RETAIN_ROUNDS
   /**
    * 泳道预备颜色池(本地偏好优先,其次插件配置,最后内置默认值;数量不足时自动补足)。
    * 本地偏好可能被写到上限之外,故读取时一并按 `MAX_LANE_COLOR_POOL_SIZE` 收敛,
@@ -1420,7 +1427,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   /**
    * 导出反馈状态:空闲 / 已复制 / 复制失败。
    * 反馈就地显示在按钮上(守则禁止浏览器原声弹窗),2 秒后回到空闲。
-   */  const [exportState, setExportState] = useState<'idle' | 'copied' | 'failed'>('idle')
+   */
+  const [exportState, setExportState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const exportTimer = useRef<number | null>(null)
   useEffect(() => () => {
     if (exportTimer.current !== null) window.clearTimeout(exportTimer.current)
@@ -1452,7 +1460,11 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     observer.observe(element)
     setCardsWidth(element.clientWidth)
     return () => observer.disconnect()
-  }, [configOpen])
+    /*
+     * 栅格只在有快照的分支里渲染:加载态与数据源不可用态走提前 return,首帧取不到节点;
+     * 若只盯 configOpen,观察器此后永不挂载,实测宽度恒为 0,选双列也只会渲染单列
+     */
+  }, [configOpen, snapshot !== null])
   /** 生效列数:用户选双列但栅格宽度不足两列最小宽度时自动回退单列 */
   const effectiveColumns: PanelColumns = columns === 2 && cardsWidth >= PANEL_CARDS_DOUBLE_MIN_WIDTH ? 2 : 1
 
@@ -1727,8 +1739,6 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     cpuFactor,
     t('session.subagent'),
   )
-  /** 本会话派生的子代理进程(仅用于本会话口径的判定,卡头合计见下方按留存行计算) */
-
 
   /**
    * 表格排序:在留存之前对「本轮采样到的行」排序(未采样行按留存顺序附在其后),
@@ -1884,7 +1894,13 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     othersMemory: snapshot.totals.othersMemoryPercent,
     othersMemoryBytes: snapshot.totals.othersMemoryBytes,
     idleMemory: snapshot.totals.idleMemoryPercent,
-    totalMemoryBytes: snapshot.memoryLimitBytes ?? snapshot.totalMemoryBytes,
+    /*
+     * 内存分母与采集器同口径:配额小于可见总量时按配额,否则按可见总量
+     * (配额若大于可见总量属无效上限,按它推空闲内存会得出负数与大块误差)
+     */
+    totalMemoryBytes: snapshot.memoryLimitBytes !== null && snapshot.memoryLimitBytes < snapshot.totalMemoryBytes
+      ? snapshot.memoryLimitBytes
+      : snapshot.totalMemoryBytes,
   }
   /**
    * 行显示名:带标注时拼上标注(如本会话卡里子代理进程行的「子代理」、
