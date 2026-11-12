@@ -1793,7 +1793,6 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     for (const id of PANEL_CARD_IDS) {
       rows[id] = retention[id].advance(sampledGroups[id].map((group) => ({
         key: group.stickyKey ?? group.key,
-        rowKey: group.key,
         row: group,
         // 同一身份多行时,零值行取占用最高的一行作代表
         weight: group.cpuPercent,
@@ -1916,6 +1915,10 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const snapshotText = (): string => {
     const lines: string[] = [
       `${t('summary.sampledAt')}: ${formatDateTime(snapshot.sampledAt)}`,
+      `${t('summary.status')}: ${statusLabel}`,
+      // 失败原因与不可读进程数同属排障信息:导出文本脱离面板后仍要能看出本轮是否降级
+      ...(snapshot.error === undefined ? [] : [`${t('summary.error')}: ${snapshot.error}`]),
+      ...(snapshot.unreadableCount > 0 ? [`${t('summary.unreadable')}: ${snapshot.unreadableCount}`] : []),
       `${t('summary.platform')}: ${snapshot.platform}`,
       `${t('summary.cpuCount')}: ${snapshot.cpuCount}`,
       `${t('summary.totalMemory')}: ${formatBytes(snapshot.totalMemoryBytes)}`,
