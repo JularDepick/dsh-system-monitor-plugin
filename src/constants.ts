@@ -45,8 +45,8 @@ export const DEFAULT_PANEL_COLUMNS: PanelColumns = 1
 
 /**
  * CPU 展示口径:
- * `machine` 为整机口径(占全部逻辑处理器的百分比,单进程上限 100%),
- * `core` 为单核口径(占单个逻辑处理器的百分比,多线程进程可超过 100%);
+ * `machine` 为整机口径(分母是口径核数: 有生效 CPU 配额时为配额核数,否则为可见逻辑处理器数;
+ * 单进程上限 100%),`core` 为单核口径(占单个口径核数的百分比,多线程进程可超过 100%);
  * 仅影响面板展示,采集与差分口径始终按整机计算。
  */
 export type CpuScope = 'machine' | 'core'
