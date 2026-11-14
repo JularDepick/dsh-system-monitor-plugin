@@ -114,7 +114,7 @@ react, react/jsx-runtime, react-dom, react-dom/client, @deepseek-ai/cordis, zod,
 2. **client.js 缺失 = web profile 启动失败**:激活期扫描发现 `exports["./client"]` 指向的文件不存在会聚合抛错;必须构建产出后再启动
 3. **官方仓库快照与发布包版本可能不同**:源码快照版本往往低于发布包(如快照 rc.5 vs 发布 0.1.1-rc.2);核对发布包类型与快照源码在所用 API 上的一致性或差异,换版本时务必以发布包类型为准;0.1.5-rc.1 至 0.2.1-rc.5 一致的实测要点:`ctx.slots` 的 Context 类型合并由 `@deepseek-ai/dsh-client-ui-renderer/client` 提供(与槽位 SlotMap 合并的 `ui-conversation/client` 分开),客户端代码需同时 type-only import 两者;`dsh.client.inject` 填真实包名(官方 ui-trajectory/ui-jobs 同模式),它只参与客户端组合排序,不是 Cordis 服务注入
 4. **CSS Modules 需要 lightningcss**:tsdown 不内置该管线,官方用自定义插件(虚拟 id + lightningcss transform);不想要 CSS 文件时可用内联样式规避
-5. **样式纪律**:使用 `--dsw-alias-*` 语义 token,不写死颜色;产品文案用界面语言;表格/select 文本居中;不用浏览器原生弹窗
+5. **样式纪律**:优先使用 `--dsw-alias-*` 语义 token 并避免写死颜色;需要面板自绘独立配色(不随 profile 主题走)时,把取值集中到插件自己的 CSS 变量(本项目用 `--sm-*` 并区分明暗两套),常量侧只引用变量名 —— 两种做法都成立,但同一个面板内不要混用;产品文案用界面语言;表格/select 文本居中;不用浏览器原生弹窗
 6. **pnpm 无 TTY 会 abort**:package.json 描述符变更后需 `CI=true pnpm install`;typecheck/build 也建议 `CI=true` 前缀
 7. **文案跟随界面语言必须走宿主 locale 服务**:按 `navigator.language` 判定只跟浏览器语言走,与 dsh 界面语言不一致(用户在设置页切换语言时插件文案不跟着变);正确做法:字典以命名空间注册(`ctx.locale.register(ns, { zh, en })`,类型化注册要求 `zh` 与 `en` 两套齐全;宿主自 dsh 0.2.2-rc.1 起另内置 `de`,`es`,`fr`,`ja`,`pt`,`ru`,未注册的语言由宿主回退链取用),并在槽注册时声明 `locale: ns`,框架据此向组件注入译文函数,语言切换时重建该座位;`label` 用 `ctx.locale.bind(ns)` 的 thunk 即可跟随语言;声明了 `locale` 却不注册字典会在渲染期响亮失败;`ctx.locale` 的类型家在 `@deepseek-ai/dsh-client-locale`(只承载类型,不必作为运行时依赖)
 8. **注册的 inline 行高必须带单位**:React 内联样式的 `lineHeight` 属无单位属性,数值会被原样输出为"倍数 × font-size"(`lineHeight: 20` 在 13px 字号下是 260px),组件会因此被撑出大片空白;写 `'20px'` 这类带单位字符串;复刻渲染台验证时也要保持同一数值语义,否则渲染台"通过"而真实页面崩坏
