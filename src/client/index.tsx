@@ -1319,6 +1319,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     return () => {
       alive = false
       if (timer !== undefined) clearTimeout(timer)
+      // 卸载时一并中止在途请求并清掉它的超时定时器,避免切走 tab 后仍占着连接
+      if (timeout !== undefined) clearTimeout(timeout)
+      controller?.abort()
     }
   }, [])
 

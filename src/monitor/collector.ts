@@ -563,10 +563,15 @@ export class ProcessCollector {
    * 与 advance 里判定「配额是否生效」用同一条件 —— 否则配额大于可见总量时分母被放大,
    * 「其他应用」按相减得出的内存会顶到近 100%,并超过物理内存总量。
    */
-  private readonly memoryDenominator =
+  /**
+   * 生效的内存配额:配额不小于可见物理内存属无效上限,此时上报 null,
+   * 使面板展示的「容器配额」与百分比分母是同一个数(CPU 侧同一口径)。
+   */
+  private readonly memoryQuotaBytes =
     this.limits.memoryLimitBytes !== null && this.limits.memoryLimitBytes < this.totalMemoryBytes
       ? this.limits.memoryLimitBytes
-      : this.totalMemoryBytes
+      : null
+  private readonly memoryDenominator = this.memoryQuotaBytes ?? this.totalMemoryBytes
   /** Agent 汇报句柄(按 pid 合并) */
   private readonly reported = new Map<number, ProcessHandle>()
   /** 汇报句柄绑定的实例令牌(pid → 令牌;令牌变化即作废该句柄,避免 pid 复用后沿用旧名称) */
@@ -643,9 +648,6 @@ export class ProcessCollector {
       this.lastError = null
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error)
-      // 查询失败(含未适配平台恒抛错)时本轮不执行 advance,句柄老化不能只在 advance 里推进,
-      // 否则持续失败期间汇报句柄永不淘汰,而回执早已告知「已纳入监控」
-      this.ageReportedOnFailure()
     } finally {
       this.polling = false
     }
@@ -828,8 +830,8 @@ export class ProcessCollector {
      * 故无内存配额时「空闲」取系统报告的空闲内存(截断到总量),
      * 「其他应用」取「总量减空闲减已监控成员」;有配额时仍按配额口径推剩余,两端都截断到合法区间。
      */
-    const memoryQuota = this.limits.memoryLimitBytes
-    const hasMemoryQuota = memoryQuota !== null && memoryQuota < this.totalMemoryBytes
+    const memoryQuota = this.memoryQuotaBytes
+    const hasMemoryQuota = memoryQuota !== null
     if (hasMemoryQuota) {
       othersMemoryBytes = Math.min(othersMemoryBytes, this.memoryDenominator)
       idleMemoryBytes = Math.max(0, this.memoryDenominator - othersMemoryBytes - dshMemoryBytes)
@@ -857,7 +859,7 @@ export class ProcessCollector {
       cpuCount: this.cpuCount,
       totalMemoryBytes: this.totalMemoryBytes,
       cpuQuotaCores: this.cpuQuotaCores,
-      memoryLimitBytes: this.limits.memoryLimitBytes,
+      memoryLimitBytes: this.memoryQuotaBytes,
       rootPid: this.rootPid,
       platform: this.platformLabel,
       degraded: this.query.degraded || unreadableCount > 0 || sampleSuspect,
@@ -897,23 +899,6 @@ export class ProcessCollector {
       if (timer !== undefined) clearTimeout(timer)
     }
     return this.snapshot
-  }
-
-  /**
-   * 查询失败轮推进汇报句柄的老化:与 advance 内的存续校验同一口径(宽限期用尽即淘汰),
-   * 使持续失败期间句柄集合不会无限期保留。
-   */
-  private ageReportedOnFailure(): void {
-    for (const pid of [...this.reported.keys()]) {
-      const misses = (this.reportedMisses.get(pid) ?? 0) + 1
-      if (misses > REPORTED_HANDLE_GRACE_ROUNDS) {
-        this.reported.delete(pid)
-        this.reportedTokens.delete(pid)
-        this.reportedMisses.delete(pid)
-      } else {
-        this.reportedMisses.set(pid, misses)
-      }
-    }
   }
 
   /** 合并 Agent 汇报句柄(重复按 pid 合并,存在性在下一轮采样确认;会话标注转交归属解析器) */

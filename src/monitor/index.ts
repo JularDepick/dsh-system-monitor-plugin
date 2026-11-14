@@ -190,7 +190,8 @@ export function setup(ctx: Context, config: Config): void {
     pollInterval,
     process.pid,
     createPlatformQuery(),
-    (pids, parents, instances) => resolver.resolve(pids, parents, instances),
+    // 第四个实参 held 是宽限期内仍要保活会话归属的 pid 集合,漏传会让宽限失效
+    (pids, parents, instances, held) => resolver.resolve(pids, parents, instances, held),
     (handle) => resolver.setReported(handle.pid, handle.sessionId),
   )
 
@@ -227,11 +228,16 @@ export function setup(ctx: Context, config: Config): void {
        * 表内会一直累积;取走后再交给解析器,失败也只影响该轮归属
        */
       const anchors = watcher.takeAnchors()
+      // 锚点已取出即清空,必须单独交付:宿主状态读取抛错时不能让这批锚点一起丢掉
+      try {
+        resolver.updateSpawnAnchors(anchors)
+      } catch {
+        // 锚点并入失败只影响该轮会话归属
+      }
       // 宿主服务读取异常只影响该轮归属(沿用上一轮的会话与锚点), 不得中断轮询,
       // 更不得把异常抛给 setInterval 的回调 —— 那会变成宿主的未捕获异常
       try {
         resolver.updateHostState(readSessionInfos(ctx), readTerminalOwners(ctx))
-        resolver.updateSpawnAnchors(anchors)
       } catch {
         // 单轮归属信息不可用:保持上一轮结果继续采集
       }

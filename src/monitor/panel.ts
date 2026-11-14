@@ -69,14 +69,26 @@ export class MonitorPanel {
     }
     const previous = this.route
     this.route = { server, dispose }
-    if (previous !== null && previous.dispose !== null) previous.dispose()
+    // 宿主的 disposer 抛错会沿服务事件调用栈抛出,不得让它影响本次挂载结果
+    if (previous !== null && previous.dispose !== null) {
+      try {
+        previous.dispose()
+      } catch {
+        // 旧路由摘除失败只留下一个多余处理器,不影响新路由
+      }
+    }
   }
 
   /** 摘掉当前数据路由(插件卸载或 webServer 实例更替时调用) */
   detach(): void {
     const route = this.route
     this.route = null
-    if (route !== null && route.dispose !== null) route.dispose()
+    if (route === null || route.dispose === null) return
+    try {
+      route.dispose()
+    } catch {
+      // 卸载期的 disposer 异常同样不得外抛
+    }
   }
 
   /**
