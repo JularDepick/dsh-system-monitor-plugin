@@ -17,7 +17,7 @@
  */
 
 import { ChildProcess } from 'node:child_process'
-import { SESSION_ENV_KEY } from '../constants'
+import { MAX_SPAWN_ANCHORS, SESSION_ENV_KEY } from '../constants'
 
 /** 派生锚点表:宿主派生窗口内创建的子进程标识 → 会话标识 */
 type SpawnAnchors = ReadonlyMap<number, string>
@@ -141,6 +141,11 @@ export class ChildSpawnWatcher {
     const pairs = (options as { envPairs?: unknown } | null)?.envPairs
     const sessionId = sessionIdFromEnvPairs(pairs) ?? this.windows[this.windows.length - 1]
     if (sessionId === undefined || sessionId.length === 0) return
+    // 取用前若调用方抛错,表内的项只进不出:按最早记录者淘汰,避免映射无界增长
+    if (!this.pending.has(pid) && this.pending.size >= MAX_SPAWN_ANCHORS) {
+      const oldest = this.pending.keys().next()
+      if (!oldest.done) this.pending.delete(oldest.value)
+    }
     this.pending.set(pid, sessionId)
   }
 }

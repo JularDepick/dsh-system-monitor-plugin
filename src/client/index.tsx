@@ -100,6 +100,7 @@ import {
   PANEL_TABLE_SESSION_WIDTH,
   PANEL_TEXT_CJK_WIDTH,
   PANEL_TOP_PADDING,
+  PANEL_REQUEST_TIMEOUT_MS,
   PANEL_TYPOGRAPHY,
   PLUGIN_NAME,
   PLUGIN_VERSION,
@@ -1274,6 +1275,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   useEffect(() => {
     let alive = true
     let timer: ReturnType<typeof setTimeout> | undefined
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    let controller: AbortController | undefined
     /**
      * 单次轮询:只有「计算完成」的快照才更新界面。
      * 占位响应(采集器尚未产出首份快照)与轮询失败一律不覆盖既有内容,
@@ -1281,7 +1284,13 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
      */
     const tick = async (): Promise<void> => {
       try {
-        const response = await fetch(MONITOR_DATA_PATH, { cache: 'no-store' })
+        /*
+         * 请求带超时:裸 fetch 一旦挂起,串行轮询的下一轮永远排不上,面板会停在旧帧且无法自愈
+         * (服务端自身最长等 PANEL_FIRST_SAMPLE_WAIT_MS,故超时取它加一段余量)
+         */
+        controller = new AbortController()
+        timeout = setTimeout(() => controller?.abort(), PANEL_REQUEST_TIMEOUT_MS)
+        const response = await fetch(MONITOR_DATA_PATH, { cache: 'no-store', signal: controller.signal })
         if (!response.ok) throw new Error(String(response.status))
         const data = (await response.json()) as MonitorSnapshot
         if (!alive) return
@@ -1299,6 +1308,9 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         if (!alive) return
         setUnavailable(true)
       } finally {
+        if (timeout !== undefined) clearTimeout(timeout)
+        timeout = undefined
+        controller = undefined
         // 串行轮询:等本轮请求结束再排下一轮,避免请求堆叠
         if (alive) timer = setTimeout(() => void tick(), CLIENT_POLL_INTERVAL)
       }

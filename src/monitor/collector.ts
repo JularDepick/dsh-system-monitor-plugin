@@ -14,7 +14,7 @@ import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { cpus, freemem, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { INSTANCE_TOKEN_TOLERANCE_MS, LINUX_CLK_TCK, QUERY_TIMEOUT_MS, REPORTED_HANDLE_GRACE_ROUNDS } from '../constants'
+import { INSTANCE_TOKEN_TOLERANCE_MS, LINUX_CLK_TCK, MAX_REPORTED_HANDLES, QUERY_TIMEOUT_MS, REPORTED_HANDLE_GRACE_ROUNDS } from '../constants'
 import type { MonitorSnapshot, ProcessHandle, ProcessOwner, ProcessRecord, ResourceSample } from './types'
 
 import { readCgroupLimits } from './cgroup'
@@ -549,7 +549,15 @@ export class ProcessCollector {
    * 配额核数可以是小数(如 0.5 核),故不能对配额取下限 1 —— 那会把小数配额的占用率按整核摊薄一半;
    * 只有回退到可见核数时才补一个下限,避免除零。
    */
-  private readonly cpuDenominator = this.limits.cpuQuotaCores ?? Math.max(1, this.cpuCount)
+  /**
+   * 生效的 CPU 配额核数:配额不小于可见核数属无效上限(与内存维度同一口径),
+   * 按它作分母会把整机百分比整体摊薄,故只在严格小于可见核数时采信。
+   */
+  private readonly cpuQuotaCores =
+    this.limits.cpuQuotaCores !== null && this.limits.cpuQuotaCores < this.cpuCount
+      ? this.limits.cpuQuotaCores
+      : null
+  private readonly cpuDenominator = this.cpuQuotaCores ?? Math.max(1, this.cpuCount)
   /**
    * 内存百分比分母:配额小于可见物理内存时按配额,否则按可见物理内存总量。
    * 与 advance 里判定「配额是否生效」用同一条件 —— 否则配额大于可见总量时分母被放大,
@@ -635,6 +643,9 @@ export class ProcessCollector {
       this.lastError = null
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error)
+      // 查询失败(含未适配平台恒抛错)时本轮不执行 advance,句柄老化不能只在 advance 里推进,
+      // 否则持续失败期间汇报句柄永不淘汰,而回执早已告知「已纳入监控」
+      this.ageReportedOnFailure()
     } finally {
       this.polling = false
     }
@@ -765,7 +776,16 @@ export class ProcessCollector {
      * 解析器按采样集合裁剪汇报映射,若只传 order,句柄重新可见时 Windows 与 macOS(无进程环境信源)
      * 会把它归到「未归因」,汇报时标注的会话随之丢失
      */
-    const owners = this.resolveOwners(order, parents, instances, [...this.reportedMisses.keys()])
+    let owners: Map<number, ProcessOwner> = new Map()
+    try {
+      owners = this.resolveOwners(order, parents, instances, [...this.reportedMisses.keys()])
+    } catch {
+      /*
+       * 归属解析失败只影响会话维度(样本落进 未归因),不得中断本轮:
+       * 此时差分基准已推进而窗口刻度尚未提交,在此抛出会让下一轮窗口翻倍,
+       * 把全部 CPU 读数摊薄一半且无任何提示。
+       */
+    }
     const memoryPercentOf = (bytes: number): number =>
       this.memoryDenominator > 0 ? (bytes / this.memoryDenominator) * 100 : 0
     const processes: ResourceSample[] = order.map((pid) => {
@@ -836,7 +856,7 @@ export class ProcessCollector {
       pollInterval: this.pollInterval,
       cpuCount: this.cpuCount,
       totalMemoryBytes: this.totalMemoryBytes,
-      cpuQuotaCores: this.limits.cpuQuotaCores,
+      cpuQuotaCores: this.cpuQuotaCores,
       memoryLimitBytes: this.limits.memoryLimitBytes,
       rootPid: this.rootPid,
       platform: this.platformLabel,
@@ -879,9 +899,35 @@ export class ProcessCollector {
     return this.snapshot
   }
 
+  /**
+   * 查询失败轮推进汇报句柄的老化:与 advance 内的存续校验同一口径(宽限期用尽即淘汰),
+   * 使持续失败期间句柄集合不会无限期保留。
+   */
+  private ageReportedOnFailure(): void {
+    for (const pid of [...this.reported.keys()]) {
+      const misses = (this.reportedMisses.get(pid) ?? 0) + 1
+      if (misses > REPORTED_HANDLE_GRACE_ROUNDS) {
+        this.reported.delete(pid)
+        this.reportedTokens.delete(pid)
+        this.reportedMisses.delete(pid)
+      } else {
+        this.reportedMisses.set(pid, misses)
+      }
+    }
+  }
+
   /** 合并 Agent 汇报句柄(重复按 pid 合并,存在性在下一轮采样确认;会话标注转交归属解析器) */
   mergeReported(handles: readonly ProcessHandle[]): void {
     for (const handle of handles) {
+      // 多次汇报累积可能超过单批上限:按最早纳入者淘汰,避免映射无界增长
+      if (!this.reported.has(handle.pid) && this.reported.size >= MAX_REPORTED_HANDLES) {
+        const oldest = this.reported.keys().next()
+        if (!oldest.done) {
+          this.reported.delete(oldest.value)
+          this.reportedTokens.delete(oldest.value)
+          this.reportedMisses.delete(oldest.value)
+        }
+      }
       this.reported.set(handle.pid, handle)
       // 新上报的句柄重新绑定实例令牌:该 pid 若已换进程,以本次采样到的实例为准
       this.reportedTokens.delete(handle.pid)

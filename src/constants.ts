@@ -154,6 +154,20 @@ export const CLIENT_POLL_INTERVAL = 1000
  */
 export const PANEL_FIRST_SAMPLE_WAIT_MS = QUERY_TIMEOUT_MS + 2000
 
+/**
+ * 客户端数据请求超时(毫秒)。
+ * 服务端在首轮未完成时最长等 `PANEL_FIRST_SAMPLE_WAIT_MS`,故超时取它加一段余量;
+ * 没有超时的话,一次挂起的请求会让串行轮询再也排不上下一轮,面板停在旧帧且无法自愈。
+ */
+export const PANEL_REQUEST_TIMEOUT_MS = PANEL_FIRST_SAMPLE_WAIT_MS + 5000
+
+/**
+ * 派生锚点表的条数上限。
+ * 锚点按 pid 记账并在每轮采集时被取走,取用前若宿主状态刷新抛错,表内的项只进不出;
+ * 加上限避免这种异常路径让映射无界增长。
+ */
+export const MAX_SPAWN_ANCHORS = 512
+
 /** 会话区域 tab 标识(conversation.view 槽注册 id) */
 export const PANEL_TAB_ID = 'system-monitor'
 

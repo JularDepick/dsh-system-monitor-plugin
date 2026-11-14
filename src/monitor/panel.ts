@@ -30,13 +30,28 @@ export class MonitorPanel {
    */
   private route: { server: unknown; dispose: (() => void) | null } | null = null
 
+  /**
+   * 宿主服务实例本体:cordis 的 `ctx.get` 每次返回新的代理对象,
+   * 直接拿返回值做相等比较会恒不相等(路由因此每秒摘挂一次),故取本体比较。
+   */
+  private static readonly SERVICE_ORIGINAL = Symbol.for('cordis.original')
+
+  /** 取宿主服务实例本体(取不到时退回视图本身) */
+  private static instanceOf(view: unknown): unknown {
+    const original = (view as Record<symbol, unknown> | null)?.[MonitorPanel.SERVICE_ORIGINAL]
+    return typeof original === 'object' && original !== null ? original : view
+  }
+
   /** 注册面板数据路由(webServer 缺失时静默跳过;同一实例重复调用只挂一次) */
   attach(ctx: Context): void {
     const webServer = ctx.get('webServer')
     if (!webServer) return
-    if (this.route !== null && this.route.server === webServer) return
-    // 实例更替:先摘掉旧路由再挂
-    this.detach()
+    const server = MonitorPanel.instanceOf(webServer)
+    if (this.route !== null && this.route.server === server) return
+    /*
+     * 先注册新路由再摘旧路由:注册失败(宿主未提供路由扩展点或实例已失效)时旧端点仍然可用,
+     * 不会因为一次失败把面板直接变成 404
+     */
     let dispose: (() => void) | null = null
     try {
       const registered: unknown = webServer.register({
@@ -52,7 +67,9 @@ export class MonitorPanel {
       // 挂载失败(宿主未提供路由扩展点或实例已失效)不留记录:下次服务事件或再次挂载时重试
       return
     }
-    this.route = { server: webServer, dispose }
+    const previous = this.route
+    this.route = { server, dispose }
+    if (previous !== null && previous.dispose !== null) previous.dispose()
   }
 
   /** 摘掉当前数据路由(插件卸载或 webServer 实例更替时调用) */

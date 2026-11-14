@@ -19,7 +19,8 @@ export function normalizeCpuScope(value: unknown): CpuScope | null {
  */
 export function cpuDisplayFactor(scope: CpuScope, cpuCount: number): number {
   if (scope !== 'core') return 1
-  return Number.isFinite(cpuCount) && cpuCount >= 1 ? cpuCount : 1
+  // 配额核数可以是小数(如 0.5 核容器),下界只能判正,判 >= 1 会把小数配额当非法值退成 1
+  return Number.isFinite(cpuCount) && cpuCount > 0 ? cpuCount : 1
 }
 
 /** 按倍率换算一个整机口径百分比(不在此处截断上限,单核口径允许超过 100%) */
