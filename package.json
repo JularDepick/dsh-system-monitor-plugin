@@ -1,6 +1,6 @@
 {
   "name": "dsh-system-monitor-plugin",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "面向 dsh 的插件: 监控 dsh 进程及其派生子进程的资源占用, 并以面板图表报告整机与各会话的 CPU 与内存占用",
   "license": "Apache-2.0",
   "repository": {
@@ -23,7 +23,7 @@
   ],
   "engines": {
     "node": ">=20",
-    "dsh": ">=0.2.1-rc.1 <=0.2.2-rc.2"
+    "dsh": ">=0.2.1-rc.1 <0.2.3-rc.1"
   },
   "type": "module",
   "main": "./dist/index.mjs",
@@ -59,15 +59,15 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5 || ~4.1.0",
-    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.1 <=0.2.2-rc.2"
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.1 <0.2.3-rc.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.1.0",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-client-ui-renderer": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-client-ui-slots": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.2-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.3",
     "@types/node": "^20.19.0",
     "@types/react": "^18.3.1",
     "react": "^18.2.0",

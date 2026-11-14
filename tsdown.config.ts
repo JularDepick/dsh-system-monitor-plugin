@@ -15,9 +15,9 @@ import { defineConfig } from 'tsdown'
  * 只列客户端产物真正 value-import 的包:产物当前只产生 react, react/jsx-runtime
  * 与 @deepseek-ai/dsh-client-ui-primitives 三个 require,多列未引用的 seed 词
  * 不会改变产物,却会让清单与规范(只列真实 value-import)不一致。
- * 清单取受支持 dsh 版本(0.2.1-rc.1 至 0.2.2-rc.2 的七版)平台模块表的公共子集:
+ * 清单取受支持 dsh 版本(0.2.1-rc.1 至 0.2.2-rc.3 的八版)平台模块表的公共子集:
  * 该表在 0.2.1-rc.1 至 0.2.1-rc.5 逐项一致(rc.4 与 rc.5 的前端产物与 rc.3
- * 逐一哈希相同),0.2.2-rc.1 与 0.2.2-rc.2 复核为同一份十一项;0.2.1-rc.1 起新增的 zod 与
+ * 逐一哈希相同),0.2.2-rc.1 至 0.2.2-rc.3 复核为同一份十一项;0.2.1-rc.1 起新增的 zod 与
  * @tanstack/react-virtual 本插件不引入,故不列入
  */
 const PLATFORM_EXTERNALS = [
