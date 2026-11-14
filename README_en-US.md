@@ -2,7 +2,7 @@
 
 # dsh-system-monitor-plugin
 
-[![Version](https://img.shields.io/badge/Version-0.3.3-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.3)
+[![Version](https://img.shields.io/badge/Version-0.3.4-green)](https://github.com/JularDepick/dsh-system-monitor-plugin/tree/v0.3.4)
 [![Copyright](https://img.shields.io/badge/Copyright-JularDepick-0066AA)](./COPYRIGHT)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
@@ -12,7 +12,7 @@ English | [简体中文](./README.md)
 
 A plugin for dsh: monitor the resource utilization of dsh processes and their spawned children, and report the results in panel charts
 
-Supports dsh 0.2.1-rc.1 through 0.2.2-rc.2
+Supports dsh 0.2.1-rc.1 through 0.2.2-rc.3
 
 ---
 
@@ -31,7 +31,7 @@ Supports dsh 0.2.1-rc.1 through 0.2.2-rc.2
 
 ## Installation
 
-This release supports dsh 0.2.1-rc.1 through 0.2.2-rc.2: since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and dsh 0.2.0-rc.2 or newer but outside that set is refused at installation and at startup; dsh older than 0.2.0-rc.2 has no compatibility gate and is not supported
+This release supports dsh 0.2.1-rc.1 through 0.2.2-rc.3 (range `>=0.2.1-rc.1 <0.2.3-rc.1`): since 0.2.1-rc.1 dsh decides by the manifest `engines.dsh` range alone when one is declared (peers are then ignored), while 0.2.0-rc.2 checks only the dsh-prefixed `peerDependencies`; this plugin declares the same supported set in both places, and dsh 0.2.0-rc.2 or newer but outside that set is refused at installation and at startup; dsh older than 0.2.0-rc.2 has no compatibility gate and is not supported
 
 This plugin works in both the `web` and `desktop` dsh profiles, installed from the same package; only the UI host environment differs (Web UI session-area tab / the same slot on desktop), while collection and panel behavior stay identical (in-repository testing covers the `web` profile; `desktop` reuses the same package but has not been verified item by item)
 
@@ -50,7 +50,7 @@ dsh plugin --profile <name> add dsh-system-monitor-plugin
 When distributing a tarball:
 
 ```sh
-dsh plugin --profile <name> add ./dsh-system-monitor-plugin-0.3.3.tgz
+dsh plugin --profile <name> add ./dsh-system-monitor-plugin-0.3.4.tgz
 ```
 
 

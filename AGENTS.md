@@ -288,7 +288,7 @@ dsh-system-monitor-plugin: 监控 dsh 进程及其派生子进程的资源占用
 
 - 插件命名遵循 `dsh-<核心名称>-plugin` 规范,核心名称 `system-monitor`
 - 项目文档语言核心为中文: 主 README 为 `README.md`(中文),英文为额外文档 `README_en-US.md`
-- 目标 dsh 版本 `0.2.1-rc.1` 至 `0.2.2-rc.2`(同一份插件包同时支持七者,即 `>=0.2.1-rc.1` 且 `<=0.2.2-rc.2`),Release 命名绑定受支持的 dsh 版本(见 `docs/repo-spec/tag-release-spec.md`)
+- 目标 dsh 版本 `>=0.2.1-rc.1` 且 `<0.2.3-rc.1`(上限为半开区间: 已逐个核对 0.2.1-rc.1 至 0.2.2-rc.3 共八者,0.2.2 的后续修订版与正式版一并纳入,0.2.3-rc.1 及其后的版本仍被挡住),Release 命名绑定受支持的 dsh 版本(见 `docs/repo-spec/tag-release-spec.md`)
 - 适用 profile: `web` 与 `desktop`,两者共用同一份插件包,差异只在界面宿主环境
 
 #### 技术栈
@@ -298,8 +298,8 @@ dsh-system-monitor-plugin: 监控 dsh 进程及其派生子进程的资源占用
 | 语言 | TypeScript,ESM(`type: module`) |
 | 构建 | tsdown(构建产物目录不入版本控制;打包产物在打包后由后置脚本先清理本包历史 tarball,再移入发布目录) |
 | 包管理 | pnpm |
-| 目标 dsh 版本 | `0.2.1-rc.1` 至 `0.2.2-rc.2`(七版本支持,即 `>=0.2.1-rc.1` 且 `<=0.2.2-rc.2`) |
-| 运行时依赖 | `@deepseek-ai/schemastery` `~3.19.0`(`dependencies`,无状态工具包);`@deepseek-ai/cordis` `~4.0.5 || ~4.1.0`(0.2.1-rc.1 至 rc.5 的宿主带 `~4.0.5`,0.2.2-rc.1 与 0.2.2-rc.2 带 `~4.1.0`,故 peer 写成两档并联)与 `@deepseek-ai/dsh-tools`(`peerDependencies` + `devDependencies`,与宿主共享实例,运行时由宿主/profile 提供);`@deepseek-ai/dsh-tools` 的 peer 范围写成受支持 dsh 版本的区间(`>=0.2.1-rc.1 <=0.2.2-rc.2`),devDependency 取受支持集合内的最新版本(0.2.2-rc.2)供类型检查;dsh 前缀的 peer 自 dsh 0.2.0-rc.2 起被宿主强制校验,自 0.2.1-rc.1 起由 `engines.dsh` 优先决定(见设计细节 宿主版本兼容性) |
+| 目标 dsh 版本 | `>=0.2.1-rc.1` 且 `<0.2.3-rc.1`(八版本已核对: 0.2.1-rc.1 至 0.2.1-rc.5,0.2.2-rc.1 至 0.2.2-rc.3) |
+| 运行时依赖 | `@deepseek-ai/schemastery` `~3.19.0`(`dependencies`,无状态工具包);`@deepseek-ai/cordis` `~4.0.5 || ~4.1.0`(0.2.1-rc.1 至 rc.5 的宿主带 `~4.0.5`,0.2.2-rc.1 至 0.2.2-rc.3 带 `~4.1.0`,故 peer 写成两档并联)与 `@deepseek-ai/dsh-tools`(`peerDependencies` + `devDependencies`,与宿主共享实例,运行时由宿主/profile 提供);`@deepseek-ai/dsh-tools` 的 peer 范围写成受支持 dsh 版本的区间(`>=0.2.1-rc.1 <0.2.3-rc.1`),devDependency 取受支持集合内的最新版本(0.2.2-rc.3)供类型检查;dsh 前缀的 peer 自 dsh 0.2.0-rc.2 起被宿主强制校验,自 0.2.1-rc.1 起由 `engines.dsh` 优先决定(见设计细节 宿主版本兼容性) |
 | 客户端 UI | React 18(运行时由宿主平台模块表提供),`conversation.view` 槽 + host webserver 数据路由;官方组件库 `@deepseek-ai/dsh-client-ui-primitives`(devDependency,平台 seed 直接 value-import) |
 
 > 当项目技术栈发生变化时需要自主更新并告知用户
@@ -407,7 +407,7 @@ dsh-system-monitor-plugin/
 - 面板文案本地化: 字典以 `PANEL_LOCALE_NAMESPACE` 命名空间注册进宿主 locale 服务(`ctx.locale.register`),`conversation.view` 注册声明同一命名空间以取得框架注入的 `t` 座位,标签 thunk 与面板文案因此跟随 dsh 界面语言(禁用浏览器 `navigator.language` 判定;宿主 0.2.2-rc.1 起内置八个语言 id,本插件注册 `zh` 与 `en` 两套,其余语言由宿主回退链取用;字典键集与 `src/translation/*.ini` 双向一致)
 - 面板数据有效性: 采集器尚未产出首份快照时,数据端点先等待首轮采集计算完成(`PANEL_FIRST_SAMPLE_WAIT_MS`,为查询超时加 2 秒),超时才返回 200 与占位快照(`sampledAt` 为 0,`error` 记失败原因),浏览器端因此不会先拿到会令面板置空的占位数据;客户端按串行轮询(等本轮请求结束再排下一轮)且只在 `sampledAt` 大于 0 时更新界面,占位响应不覆盖既有内容,不带 `error` 的占位只表示首轮未完成(保持加载态),带 `error` 的占位与请求失败才置 数据源不可用(已有旧快照时保留旧快照并改示徽章);已有失败原因时不再等首轮(持久失败下每次请求都白等满等待窗口会让首答与恢复各迟滞一次);数据路由在每次轮询时补挂,不只依赖服务事件,注册抛错或 webServer 晚出现时仍能自愈
 - 面板容器契约(dsh 0.2.0-rc.2 发布包核对,与 0.1.7-rc.2,0.1.5-rc.1 一致): 宿主视图区与滚动容器均无内边距,槽锚点为 `display:contents`,故面板自带内边距(`PANEL_TOP_PADDING`,`PANEL_BOTTOM_PADDING`,`PANEL_COLUMN_GUTTER`(左右内边距 60px),`max-width` 取 `PANEL_MAX_WIDTH` 以用满 tab 可用宽度,仅超宽屏收窄);四张区域卡放在栅格容器中,列数由 `columns` 配置决定(单列为 `1fr` 纵向排布,双列为 `repeat(2, minmax(0, 1fr))`),默认单列;双列在栅格实测宽度低于 `PANEL_CARDS_DOUBLE_MIN_WIDTH` 时自动回退单列(窄屏下不把卡片压到不可读),回退只影响渲染,不改用户选择;面板根为纵向 flex 滚动容器(`flex:0 1 auto`,`min-height:0`,`overflow-y:auto`),并在注入样式中用 `.sm-column > * { flex: none; }` 锁死直接子块不参与压缩(卡片带 `overflow:hidden` 时 flex 自动最小尺寸为 0,会被压扁并裁掉内容);**宽度自适应**: 面板根与卡片均置 `min-width:0`(flex 项的 min-width 默认 `auto`,不置 0 会被表格等宽内容的 min-content 宽度钉住而横向溢出),故宿主拖动宽度手柄(`wSkVaW_widthHandle`)调整对话区域宽度时面板随之收缩/展开,内部尺寸全部由 `ResizeObserver` 实测(卡片主体与表格各挂观察器,栅格另挂一个)驱动列宽与占比条宽度重算,超宽屏仍按 `PANEL_MAX_WIDTH` 收窄;占比条由三段固定泳道构成(两端按 `PANEL_SHARE_OTHERS_RATIO` 与 `PANEL_SHARE_IDLE_RATIO` 固定宽度,中段按 `PANEL_SHARE_DSH_RATIO` 固定宽度并在其内用 `flexGrow` 分配各成员比例),标签行与泳道同构(固定比例与 `flexGrow` 一致)以免逐行漂移
-- 宿主版本兼容性(dsh 0.2.0-rc.2 起强制,dsh 0.2.1-rc.1 起 `engines.dsh` 优先;0.2.1-rc.2 至 0.2.2-rc.2 的判定实现与 0.2.1-rc.1 一致(`@deepseek-ai/dsh-app-boot` 里的 `evaluatePluginCompatibility` 签名与调用点未变)): 宿主只读插件 manifest 判兼容,不导入插件代码;manifest 声明了 `engines.dsh` 时由该 SemVer 范围单独决定,dsh 前缀 peer 不再参与判定(dsh 0.2.1-rc.1 起的行为;dsh 0.2.0-rc.2 无此路径,只校验 peer);未声明 `engines.dsh` 时逐个校验 `peerDependencies` 中 `@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-*` 前缀的项;两处都按 `semver.satisfies(运行时版本, 范围, {includePrerelease:true})` 判定;不兼容时 `dsh plugin add` 抛 `incompatible-version`(退出码 1),profile 装载前该行被置 `disabled` 并打印禁用原因;`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 不参与判定;豁免走 profile 目录的 `compatibility.json`(`dsh plugin allow-version`,授予需 `--accept-risk`);本项目因此把 `engines.dsh` 与 `@deepseek-ai/dsh-tools` 的 peer 都写成受支持版本的区间(`>=0.2.1-rc.1 <=0.2.2-rc.2`,两处同一取值,即在 0.2.1-rc.1 至 0.2.2-rc.2 区间内按 `engines.dsh` 通过),不写成 `>=0.2.1-rc.1` 这类无上界的形式以避免把未验证的 dsh 版本一并纳入;新增或移除受支持版本时两处同时改写
+- 宿主版本兼容性(dsh 0.2.0-rc.2 起强制,dsh 0.2.1-rc.1 起 `engines.dsh` 优先;0.2.1-rc.2 至 0.2.2-rc.3 的判定实现与 0.2.1-rc.1 一致(`@deepseek-ai/dsh-app-boot` 里的 `evaluatePluginCompatibility` 签名与调用点未变)): 宿主只读插件 manifest 判兼容,不导入插件代码;manifest 声明了 `engines.dsh` 时由该 SemVer 范围单独决定,dsh 前缀 peer 不再参与判定(dsh 0.2.1-rc.1 起的行为;dsh 0.2.0-rc.2 无此路径,只校验 peer);未声明 `engines.dsh` 时逐个校验 `peerDependencies` 中 `@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-*` 前缀的项;两处都按 `semver.satisfies(运行时版本, 范围, {includePrerelease:true})` 判定;不兼容时 `dsh plugin add` 抛 `incompatible-version`(退出码 1),profile 装载前该行被置 `disabled` 并打印禁用原因;`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 不参与判定;豁免走 profile 目录的 `compatibility.json`(`dsh plugin allow-version`,授予需 `--accept-risk`);本项目因此把 `engines.dsh` 与 `@deepseek-ai/dsh-tools` 的 peer 都写成受支持版本的区间(`>=0.2.1-rc.1 <0.2.3-rc.1`,两处同一取值,即在该区间内按 `engines.dsh` 通过),不写成 `>=0.2.1-rc.1` 这类无上界的形式以避免把未验证的 dsh 版本一并纳入;上限取半开区间而非逐版列举,是因为宿主按 `includePrerelease:true` 判定,半开区间把 0.2.2 的后续修订版与正式版一并纳入,而 0.2.3-rc.1 及其后的版本仍被挡住;注意该写法同样放行 0.2.3 的 alpha 版(其版本序小于 0.2.3-rc.1),宿主升到 0.2.3 系列时须重新核对并改写区间;新增或移除受支持版本时两处同时改写
 - 编译产物: 服务端产物为 ESM 入口与类型声明,客户端产物为固定名脚本;构建产物目录与打包产物目录均不入版本控制,`package.json` 的 `main` 与 `types` 必须与真实产物路径对齐;对外分发走 GitHub Release 附 tarball(包内已含构建产物);包内 manifest 会保留 `build` `dev` `typecheck` `check` 四个开发脚本,而它们引用的构建配置与脚本不在 `files` 白名单内(npm 只剥离 `prepare` 与 `postpack` 两个钩子),故这四个脚本在解包目录里不可用 —— 属有意取舍: 这些脚本只供项目仓库内使用,插件消费者只经 dsh 装载 `dist` 产物,从不运行它们
 - 版本控制与分发边界: 构建与打包产物不入版本控制;后果: 固定提交中不含运行产物,固定源自动检查会判为 运行产物缺失 并因此无法自动收录,属有意取舍,不以追踪构建产物换取收录
 - 许可证口径: 项目以 Apache-2.0 授权,`LICENSE`(Apache License 2.0 全文)为唯一权威文本;`package.json` 的 `license` 字段与两个 README 的许可证徽章必须与之一致(不得再出现 MIT 等其它许可声明);历史发行物不回溯修改
@@ -434,10 +434,10 @@ dsh-system-monitor-plugin/
 
 #### 版本号索引
 
-- 当前版本: `v0.3.3`(正在开发,tag 尚未打;上一发行版本 `v0.3.2` 的 tag 指向 `78b1638`,已发行并已推送,npm registry 的 latest 亦为 0.3.2;同一份插件包同时支持 dsh 0.2.1-rc.1 至 0.2.2-rc.2;源码与文档中的版本号已按 `version.index.md` 清单迭代到 0.3.3)
+- 当前版本: `v0.3.4`(正在开发,tag 尚未打;上一发行版本为 `v0.3.3`(tag `v0.3.3` 已打并已推送,npm registry 的 latest 为 0.3.3);同一份插件包同时支持 dsh 0.2.1-rc.1 至 0.2.2-rc.3(区间 `>=0.2.1-rc.1 <0.2.3-rc.1`);源码与文档中的版本号已按 `version.index.md` 清单迭代到 0.3.3)
 
-  - 上一发行版本: `v0.3.1`(tag `v0.3.1` 指向 `8473dbb`,已发行);更早的发行版本为 `v0.3.0`(tag `v0.3.0` 指向 `f077544`),`v0.2.4`(tag `v0.2.4` 指向 `f4f01aa`),`v0.2.3`(tag `v0.2.3` 指向 `2c04df7`),`v0.2.2`(tag `v0.2.2` 指向 `db47d2d`)与 `v0.2.1`(tag `v0.2.1` 指向 `671060a`);核对版本一律以 `git tag` 与 `git log` 为准
-  - 0.2.2 的变更记录写在 `docs/v0.2.2-UI设计规范.md`,`docs/v0.2.2-跨平台采集机制与规范.md` 与 `docs/v0.2.2-发行说明.md`;**`docs/v0.2.0-*` 两份同功能文档保持历史原样,不再改动**(用户明确要求);0.2.3 的发行说明写在 `docs/v0.2.3-发行说明.md`;0.2.4 的发行说明写在 `docs/v0.2.4-发行说明.md`;0.3.0 的版本文档为 `docs/v0.3.0-发行说明.md` 与 `docs/v0.3.0-实测清单.md`;0.3.1 的版本文档为 `docs/v0.3.1-发行说明.md`;0.3.2 的版本文档为 `docs/v0.3.2-发行说明.md`
+  - 上一发行版本: `v0.3.3`(tag `v0.3.3` 已发行并已推送,npm latest 为 0.3.3);更早的发行版本为 `v0.3.2`(tag `v0.3.2` 指向 `78b1638`),`v0.3.1`(tag `v0.3.1` 指向 `8473dbb`),`v0.3.0`(tag `v0.3.0` 指向 `f077544`),`v0.2.4`(tag `v0.2.4` 指向 `f4f01aa`),`v0.2.3`(tag `v0.2.3` 指向 `2c04df7`),`v0.2.2`(tag `v0.2.2` 指向 `db47d2d`)与 `v0.2.1`(tag `v0.2.1` 指向 `671060a`);核对版本一律以 `git tag` 与 `git log` 为准
+  - 0.2.2 的变更记录写在 `docs/v0.2.2-UI设计规范.md`,`docs/v0.2.2-跨平台采集机制与规范.md` 与 `docs/v0.2.2-发行说明.md`;**`docs/v0.2.0-*` 两份同功能文档保持历史原样,不再改动**(用户明确要求);0.2.3 的发行说明写在 `docs/v0.2.3-发行说明.md`;0.2.4 的发行说明写在 `docs/v0.2.4-发行说明.md`;0.3.0 的版本文档为 `docs/v0.3.0-发行说明.md` 与 `docs/v0.3.0-实测清单.md`;0.3.1 的版本文档为 `docs/v0.3.1-发行说明.md`;0.3.2 的版本文档为 `docs/v0.3.2-发行说明.md`;0.3.3 的版本文档为 `docs/v0.3.3-发行说明.md`;0.3.4 的版本文档为 `docs/v0.3.4-发行说明.md`
 
 > 版本号中 `x` 表示十进制数,不限制位数,无前导 0
 
@@ -478,7 +478,7 @@ dsh plugin --profile <name> add <包或 tarball>   # 安装到 dsh profile
 - 客户端面契约: 包 `exports` 必须含 `"./package.json"`;客户端 bundle 的 `module` 与 `exports` 定义须并入 banner(构建工具无 intro 选项)
 - 发布版部署: 客户端面托管以 `NODE_PATH` 指向 profile 的依赖目录启动 dsh web;客户端脚本托管 URL 为批量格式,首页需启动 URL 的令牌认证(重启换令牌);插件自定义数据路由无需认证
 - 开发迭代用直接部署工作流: 构建后把构建产物,`package.json`,`cordis.patch.yml` 覆盖 profile 包目录;tarball 分发取打包产物目录中的包
-- 未完成事项: 依赖安装受 pnpm 机器级 store 操作锁的沙箱限制阻塞,已按绕过路径完成类型检查,构建与冒烟验证;macOS 采集与 Linux 时钟节拍探测仍待实机复核(节拍推算的核数倍率缺陷已修,并由纯函数用例覆盖)
+- 未完成事项: macOS 采集与 Linux 时钟节拍探测仍待实机复核(节拍推算的核数倍率缺陷已修,并由纯函数用例覆盖);依赖安装不再受 pnpm 机器级 store 操作锁阻塞 —— 当前会话策略下 `pnpm install` 连同 `prepare` 构建已实测通过,仅在沙箱收紧时才需要按 开发经验 的 沙箱环境 条目处置
 
 #### 开发经验
 
