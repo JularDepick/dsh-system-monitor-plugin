@@ -13,7 +13,7 @@ export const PLUGIN_NAME = 'dsh-system-monitor-plugin'
  * 插件版本号(面板页脚展示)。
  * 必须与 package.json 的 version 同步,迭代版本号时一并更新(见 version.index.md)。
  */
-export const PLUGIN_VERSION = '0.3.4'
+export const PLUGIN_VERSION = '0.3.5'
 
 /** 资源采集轮询间隔默认值(毫秒) */
 export const DEFAULT_POLL_INTERVAL = 1000
@@ -127,6 +127,16 @@ export const CLK_TCK_MAX = 10000
 /** 两种探测法的相对偏差上限(超出则采信由 /proc 推算的值) */
 export const CLK_TCK_PROBE_TOLERANCE = 0.05
 
+/**
+ * 采信推算值前要求的量级自洽区间(推算值除以标准接口值)。
+ * 系统休眠期(CLOCK_BOOTTIME 含休眠,而 cpuN 行累计节拍不增长)与 CPU 热插拔
+ * 都能把推算值压低数倍,此时推算不可信,须退回标准接口值,不得写盘长期沿用。
+ */
+export const CLK_TCK_PROBE_MISMATCH_RATIO_MIN = 0.5
+
+/** 量级自洽区间上限(见 CLK_TCK_PROBE_MISMATCH_RATIO_MIN) */
+export const CLK_TCK_PROBE_MISMATCH_RATIO_MAX = 2
+
 /** 推算探测所需的最小开机时长(秒;过短则误差大,跳过推算) */
 export const CLK_TCK_PROBE_MIN_UPTIME_SECONDS = 60
 
@@ -134,9 +144,10 @@ export const CLK_TCK_PROBE_MIN_UPTIME_SECONDS = 60
  * 时钟节拍缓存格式版本:
  * 缓存一经写入会被长期复用,故推算口径或缓存结构变化时必须递增该值,
  * 让旧缓存自动失效并重新探测(避免把历史错误值一直沿用下去);
- * 第 3 版起把单次诊断字段改为探测历史数组。
+ * 第 3 版起把单次诊断字段改为探测历史数组;
+ * 第 4 版起剔除 guest 与 guest_nice 字段(它们已计入 user 与 nice)并给推算值加量级自洽校验。
  */
-export const CLK_TCK_CACHE_VERSION = 3
+export const CLK_TCK_CACHE_VERSION = 4
 
 /** 状态文件中保留的探测历史条数上限(旧值在前,超出按先入先出丢弃) */
 export const CLK_TCK_PROBE_HISTORY_MAX = 10
@@ -148,11 +159,19 @@ export const MONITOR_DATA_PATH = '/api/system-monitor/snapshot'
 export const CLIENT_POLL_INTERVAL = 1000
 
 /**
+ * 一轮采集最多串行尝试的查询源个数(Windows 为 CIM 加 Get-Process, 类 Unix 为 ps 全量加 ps 简化)。
+ * 首轮等待预算按它放大:只按单源推导时,首选源超时后还要跑降级源,
+ * 端点会先于首份快照返回占位,面板白等一整个失败窗口。
+ */
+export const QUERY_FALLBACK_SOURCE_MAX = 2
+
+/**
  * 数据端点在采集器尚未产出首份快照时的最长等待(毫秒):
  * 等首轮采集计算完成后再回答,浏览器端因此不会先拿到占位快照、把面板置空;
  * 等待超时后仍按占位快照回答,由面板按「无有效采样」处理并继续轮询。
+ * 一轮采集最坏要串行跑满整条查询链,故按源数放大后再加一段余量。
  */
-export const PANEL_FIRST_SAMPLE_WAIT_MS = QUERY_TIMEOUT_MS + 2000
+export const PANEL_FIRST_SAMPLE_WAIT_MS = QUERY_TIMEOUT_MS * QUERY_FALLBACK_SOURCE_MAX + 2000
 
 /**
  * 客户端数据请求超时(毫秒)。
@@ -160,6 +179,13 @@ export const PANEL_FIRST_SAMPLE_WAIT_MS = QUERY_TIMEOUT_MS + 2000
  * 没有超时的话,一次挂起的请求会让串行轮询再也排不上下一轮,面板停在旧帧且无法自愈。
  */
 export const PANEL_REQUEST_TIMEOUT_MS = PANEL_FIRST_SAMPLE_WAIT_MS + 5000
+
+/**
+ * 派生包装的存活心跳阈值(轮次)。
+ * 宿主替换 subprocess 实例后,旧实例的包装记录不再被任何作用域取用,
+ * 心跳超过该轮数即还原包装并丢弃记录,避免模块级映射长期持有旧实例与观察器。
+ */
+export const SPAWN_HOOK_STALE_BEATS = 120
 
 /**
  * 派生锚点表的条数上限。
