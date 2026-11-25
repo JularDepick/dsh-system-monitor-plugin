@@ -33,7 +33,6 @@ import {
   MONITOR_DATA_PATH,
   PANEL_AUTHOR,
   PANEL_AUTHOR_URL,
-  PANEL_ACCENT_COLOR,
   PANEL_ACTIVE_COLOR,
   PANEL_BORDER_COLOR,
   PANEL_BORDER_STRONG_COLOR,
@@ -1004,7 +1003,7 @@ function ShareLegend(props: { t: PanelTranslate; colors: readonly string[] }): R
     { key: 'others', color: LANE_COLOR_OTHERS, label: props.t('chart.others') },
     {
       key: 'dsh',
-      color: `linear-gradient(90deg, ${PANEL_ACCENT_COLOR} 0 34%, ${seriesColor(0, props.colors)} 34% 67%, ${seriesColor(1, props.colors)} 67% 100%)`,
+      color: `linear-gradient(90deg, ${LANE_COLOR_PRIMARY} 0 34%, ${seriesColor(0, props.colors)} 34% 67%, ${seriesColor(1, props.colors)} 67% 100%)`,
       label: props.t('chart.dsh'),
     },
     { key: 'idle', color: LANE_COLOR_IDLE, label: props.t('chart.idle') },
@@ -1239,7 +1238,12 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     const pending = lanePoolPendingRef.current
     if (pending === null) return
     lanePoolPendingRef.current = null
+    /*
+     * 必须落盘:新增色与候选起点是下次取色的起点,只写 React state 会在刷新后回到旧池,
+     * 新增色全部丢失并因此重洗一次配色(同一进程换色),设置子页的色池也与实际配色不符
+     */
     setPreferences((prev) => ({ ...prev, laneColorPool: pending.pool, laneColorCursor: pending.cursor }))
+    writeStoredPreferences({ laneColorPool: pending.pool, laneColorCursor: pending.cursor })
   }, [snapshot])
 
   /**
@@ -1259,9 +1263,15 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
     if (configOpen) {
       // 展开时把焦点移入子页,键盘用户不必再 Tab 一圈找控件
       settingsRegionRef.current?.focus()
-    } else if (configWasOpen.current) {
+    } else {
+      /*
+       * 收起时丢弃未提交的草稿:重开子页若还显示上次的草稿,
+       * 输入框会与已生效值不一致(直到再次失焦才提交)
+       */
+      setRetainDraft(null)
+      setLaneColorDraft(null)
       // 收起时(含 ESC 与 关闭 按钮)焦点回到入口按钮,避免焦点落在已卸载的节点上
-      settingsAnchorRef.current?.querySelector('button')?.focus()
+      if (configWasOpen.current) settingsAnchorRef.current?.querySelector('button')?.focus()
     }
     configWasOpen.current = configOpen
   }, [configOpen])
@@ -1754,9 +1764,8 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
    * 本轮是否存在「采到了却没解析出归属」的派生进程(排除宿主根进程:它按设计不参与归属)。
    * 用于分辨本会话卡空态的两种成因:确实没有属于本会话的进程,还是归属链没有产出。
    */
-  const attributionMissed = processes.some(
-    (sample) => sample.handle.pid !== snapshot.rootPid && sample.owner === undefined,
-  )
+  const attributable = processes.filter((sample) => sample.handle.pid !== snapshot.rootPid)
+  const attributionMissed = attributable.length > 0 && attributable.every((sample) => sample.owner === undefined)
   const sampledCurrentSessionGroups = groupByProcess(
     currentSessionProcesses,
     snapshot.rootPid,
@@ -2273,7 +2282,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         columns={currentSessionColumns}
         sampled={currentCard.sampled}
         row={(group, index, sampled) => {
-          const sample = sampleByPid.get(group.key)
+          const sample = sampled ? sampleByPid.get(group.key) : undefined
           const last = index === currentSessionGroups.length - 1
           const high = group.memoryPercent >= PANEL_HIGH_LOAD_THRESHOLD
           const label = rowLabel(group)
@@ -2316,7 +2325,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
         columns={processColumns}
         sampled={processCard.sampled}
         row={(group, index, sampled) => {
-          const sample = sampleByPid.get(group.key)
+          const sample = sampled ? sampleByPid.get(group.key) : undefined
           const last = index === processGroups.length - 1
           const owner = sample?.owner
           const sessionLabel = sample === undefined ? '--' : sessionLabelOf(sample)
