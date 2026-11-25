@@ -6,13 +6,14 @@
  * 预备颜色池由用户在配置中增删,数量不少于 `MIN_LANE_COLOR_POOL_SIZE`;
  * 成员数超过池容量时按取色方案处理:
  *   - `cycle`:循环复用池内颜色,绝不新增、不提醒;
- *   - `midpoint`:取相邻两色的中间色作为新预备色插入池中(被占用则按轮询取下一个中间色),
- *     新增色写回配置,下次取中间色从该新增色的下一个候选继续轮询。
+ *   - `midpoint`:取相邻两色的中间色作为新预备色追加到池尾(被占用则按轮询取下一个中间色),
+ *     新增色写回偏好,下次取中间色从池头继续轮询。追加而非插入中间:
+ *     插入会移动既有成员的下标,池增长那一帧之后所有成员的颜色会整体位移。
  * 纯函数,不含 DOM 依赖,便于回归测试。
  * 作者:JularDepick
  */
 
-import { LANE_COLOR_STRATEGIES, MAX_LANE_COLOR_POOL_SIZE } from '../constants'
+import { DEFAULT_LANE_COLOR_POOL, LANE_COLOR_STRATEGIES, MAX_LANE_COLOR_POOL_SIZE } from '../constants'
 
 /** 取色方案:`cycle` 循环复用,`midpoint` 自动取间色新增(取值集合由常量定义,避免多处硬编码漂移) */
 export type LaneColorStrategy = (typeof LANE_COLOR_STRATEGIES)[number]
@@ -95,8 +96,9 @@ export function midpointCandidates(pool: readonly string[]): string[] {
 /**
  * 选择预备色:
  * 池内成员直接取对应位置的颜色;池外成员按策略处理。
- * `midpoint` 在池外逐次插入中间色(被占用则轮询下一个候选),插入位置在成对的前一色之后,
- * 并把候选起点推进到新增色之后;候选都被占用或池已达上限 `maxPool` 时退回循环复用,
+ * `midpoint` 在池外逐次取中间色追加到池尾(被占用则轮询下一个候选),
+ * 使返回的 `colors` 恒等于增长后池的前若干项(同一位次始终对应同一颜色);
+ * 候选都被占用或池已达上限 `maxPool` 时退回循环复用,
  * 保证取色一定有结果,且池不会随成员数无限增长(上限与配置面一致)。
  */
 export function planLaneColors(
@@ -107,7 +109,8 @@ export function planLaneColors(
   maxPool: number = MAX_LANE_COLOR_POOL_SIZE,
 ): LaneColorPlan {
   const colors: string[] = []
-  const next = normalizeLaneColorPool(pool, pool, 2)
+  // 池不足 2 色时按默认池补足:midpoint 需要至少一对相邻色,单色池的候选恒为空
+  const next = normalizeLaneColorPool(pool, DEFAULT_LANE_COLOR_POOL, 2)
   let start = Number.isFinite(cursor) && cursor >= 0 ? Math.floor(cursor) : 0
   if (next.length === 0) return { colors: new Array(Math.max(0, count)).fill('#94a3b8'), pool: [], cursor: 0 }
   const wanted = Math.max(0, Math.floor(count))
@@ -130,9 +133,14 @@ export function planLaneColors(
       const at = (start + step) % candidates.length
       const color = candidates[at]
       if (next.includes(color)) continue
-      next.splice(at + 1, 0, color)
+      /*
+       * 追加到池尾而不是插到成对的前一色之后:插入中间会让既有成员在池里的下标后移,
+       * 池增长那一帧之后所有成员的颜色整体位移(同一进程下一秒换色,颜色不再能作标识)
+       */
+      next.push(color)
       colors.push(color)
-      start = at + 1
+      // 新增色已在池尾,候选从池头继续轮询
+      start = 0
       inserted = true
       break
     }

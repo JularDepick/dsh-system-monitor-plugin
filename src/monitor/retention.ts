@@ -5,7 +5,7 @@
  *  - 采样过的身份在后续某轮没采样到时不移除,该行以零值继续显示;
  *  - 连续未采样达到阈值(默认 10 轮,配置范围 5 至 60)才从列表移除;
  *  - 允许用户手动移除一行,手动移除不记录到任何地方(不写本地存储,也不写服务端);
- *    该身份再次被采样到时自动补回。
+ *    该身份先缺席一轮(退出后再出现)时才自动补回,持续存活期间保持隐藏。
  * 身份口径:进程按进程名称,会话按会话标识;同一身份可能对应多行(同名多进程本轮仍逐行显示),
  * 零值行按身份聚合,代表行取权重最大者。
  * 本模块为纯逻辑,不含平台与 DOM 依赖,便于回归测试。
@@ -65,10 +65,16 @@ export class RowRetention<T> {
     const representative = new Map<string, RetentionInput<T>>()
     for (const item of current) {
       present.add(item.key)
-      // 再次采样到即补回:手动移除状态与未采样计数一并清除
-      this.removed.delete(item.key)
       const best = representative.get(item.key)
       if (best === undefined || item.weight > best.weight) representative.set(item.key, item)
+    }
+    /*
+     * 手动移除的标记要保留到该身份真正缺席一轮之后才清除:
+     * 每轮一见到就清除的话,对持续存活的进程来说移除按钮在下一轮即失效,
+     * 而对用户最想隐藏的正是这类长期运行的进程
+     */
+    for (const key of [...this.removed]) {
+      if (!present.has(key)) this.removed.delete(key)
     }
     for (const [key, item] of representative) this.entries.set(key, { row: item.row, misses: 0 })
     for (const [key, entry] of [...this.entries]) {

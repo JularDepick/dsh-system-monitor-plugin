@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -17,6 +17,8 @@ import {
   CLK_TCK_MIN,
   CLK_TCK_PROBE_HISTORY_MAX,
   CLK_TCK_PROBE_MIN_UPTIME_SECONDS,
+  CLK_TCK_PROBE_MISMATCH_RATIO_MAX,
+  CLK_TCK_PROBE_MISMATCH_RATIO_MIN,
   CLK_TCK_PROBE_TOLERANCE,
   ENV_CACHE_DIR,
   ENV_CACHE_FILE,
@@ -97,7 +99,13 @@ function writeCache(cache: ClkTckCache): void {
   try {
     const file = clockTicksCacheFile()
     mkdirSync(join(file, '..'), { recursive: true })
-    writeFileSync(file, `${JSON.stringify(cache, null, 2)}\n`, 'utf8')
+    /*
+     * 先写临时文件再改名:直接覆盖时进程若在写入中途被杀会留下截断的状态文件,
+     * 下次启动解析失败即重新探测, 连同时序诊断历史一起丢失
+     */
+    const temporary = `${file}.tmp`
+    writeFileSync(temporary, `${JSON.stringify(cache, null, 2)}\n`, 'utf8')
+    renameSync(temporary, file)
   } catch {
     // 状态文件不可写时忽略:本次运行仍使用探测值
   }
@@ -130,11 +138,16 @@ export function probeDerived(root: string): number | null {
     if (!Number.isFinite(uptime) || uptime < CLK_TCK_PROBE_MIN_UPTIME_SECONDS) return null
 
     const lines = readFileSync(join(root, 'stat'), 'utf8').split('\n')
+    /*
+     * 只累加前 8 个时间字段(user nice system idle iowait irq softirq steal):
+     * 末尾的 guest 与 guest_nice 在内核里已分别计入 user 与 nice,
+     * 一并求和会把它们算两遍,推算值系统性偏大(跑过虚拟化的机器会因此命中不一致分支)
+     */
     const jiffiesOf = (line: string): number =>
       line
         .trim()
         .split(/\s+/)
-        .slice(1)
+        .slice(1, 9)
         .reduce((sum, field) => sum + (Number.parseInt(field, 10) || 0), 0)
 
     const perCpuLines = lines.filter((line) => /^cpu\d+\s/.test(line))
@@ -166,8 +179,19 @@ export function resolveClkTck(root = '/proc'): number {
   const getconf = probeGetconf()
   const derived = probeDerived(root)
   const mismatch = getconf !== null && derived !== null && Math.abs(getconf - derived) / derived > CLK_TCK_PROBE_TOLERANCE
+  /*
+   * 两法不一致时仍按原口径采信推算值(它与实际读取的时间字段同源),
+   * 但先做量级自洽校验:系统休眠让 /proc/uptime 含休眠时长而 cpuN 行累计节拍不含,
+   * CPU 热插拔也会让后者偏短,两者都能把推算值压低数倍;
+   * 此时推算不可信,退回标准接口值,不把错值写进缓存长期沿用
+   */
+  const comparable = getconf !== null && getconf > 0 && derived !== null
+  const ratio = comparable ? (derived as number) / (getconf as number) : 0
+  const derivedTrusted = comparable
+    && ratio >= CLK_TCK_PROBE_MISMATCH_RATIO_MIN
+    && ratio <= CLK_TCK_PROBE_MISMATCH_RATIO_MAX
   let value: number | null = null
-  if (mismatch && derived !== null) value = Math.round(derived)
+  if (mismatch && derived !== null) value = derivedTrusted ? Math.round(derived) : getconf
   else if (getconf !== null) value = getconf
   else if (derived !== null) value = Math.round(derived)
 

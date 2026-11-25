@@ -148,7 +148,19 @@ export class MonitorPanel {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(body)
     } catch {
-      // 响应已关闭(客户端断开)或序列化失败:丢弃本次结果,由下一次轮询重新取数
+      /*
+       * 序列化或读取展示选项失败(运行期选项结构异常,或客户端已断开):
+       * 必须回一个明确的失败响应并结束连接 —— 什么都不写会让请求悬到客户端超时,
+       * 面板表现为每轮迟滞一次,而服务端连一条痕迹都没有
+       */
+      try {
+        if (!res.writableEnded) {
+          res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ sampledAt: 0, error: 'panel snapshot serialization failed' }))
+        }
+      } catch {
+        // 连接已断开,无处可写:交给下一次轮询
+      }
     }
   }
 }

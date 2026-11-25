@@ -145,7 +145,9 @@ class CimProcessQuery implements ProcessQuery {
     const script = [
       "$ErrorActionPreference = 'Stop'",
       '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CreationDate, @{n=\'cpu\';e={($_.UserModeTime + $_.KernelModeTime) / 10000000}}, WorkingSetSize | ConvertTo-Json -Compress',
+      // cpu 必须保留原始的 $null: $null + $null 在 PowerShell 里得 0, 折成数字会让解析侧
+      // 当成「读到 0」而记住基准, 一旦读数恢复就把整段生命周期算进一个窗口(面板出现一次极大峰值)
+      'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CreationDate, @{n=\'cpu\';e={if ($null -eq $_.UserModeTime -or $null -eq $_.KernelModeTime) { $null } else { ($_.UserModeTime + $_.KernelModeTime) / 10000000 }}}, WorkingSetSize | ConvertTo-Json -Compress',
     ].join('\n')
     const { text, pid } = await runPowershell(script)
     return dropSampler(parseRecords(text), pid)
@@ -163,7 +165,9 @@ class GetProcessQuery implements ProcessQuery {
       '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
       // cpu 保留原始的 $null(不要折成 0): 折成 0 会让解析侧当成「读到 0」而记住基准,
       // 下一轮读到真实累计值就把整段生命周期算进一个窗口,面板出现一次极大峰值
-      "Get-Process | Select-Object @{n='ProcessId';e={$_.Id}}, @{n='ParentProcessId';e={$null}}, Name, @{n='cpu';e={$_.CPU}}, @{n='WorkingSetSize';e={if ($null -eq $_.WorkingSet64) { 0 } else { $_.WorkingSet64 }}} | ConvertTo-Json -Compress",
+      // CreationDate 取 StartTime(无权访问的进程会抛错, 故逐项 try): 降级链也必须给出启动时刻,
+      // 否则降级/恢复切换那一轮差分基准键从 pid@启动时刻 退化成 pid, 全机 CPU 读数归零
+      "Get-Process | Select-Object @{n='ProcessId';e={$_.Id}}, @{n='ParentProcessId';e={$null}}, Name, @{n='cpu';e={$_.CPU}}, @{n='CreationDate';e={try { $_.StartTime } catch { $null }}}, @{n='WorkingSetSize';e={if ($null -eq $_.WorkingSet64) { 0 } else { $_.WorkingSet64 }}} | ConvertTo-Json -Compress",
     ].join('\n')
     const { text, pid } = await runPowershell(script)
     return dropSampler(parseRecords(text), pid)
@@ -289,12 +293,18 @@ export class LinuxProcQuery implements ProcessQuery {
     const startTicks = Number(tail[19])
     const status = readFileSync(join(dir, 'status'), 'utf8')
     const rssMatch = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status)
+    const cpuReadable = Number.isFinite(utime) && Number.isFinite(stime)
     const record: ProcessRecord = {
       pid,
       parentPid: Number.isInteger(parentPid) ? parentPid : null,
       name: this.readName(pid, stat.slice(nameStart + 1, nameEnd).trim()),
-      cpuSeconds: ((Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0)) / this.clkTck,
+      /*
+       * 累计时间读不出数值时按 0 计并标为不可读:采集器据此丢弃该轮基准,
+       * 否则下一轮读到真实累计值会把整段生命周期算进一个窗口(面板出现一次极大峰值)
+       */
+      cpuSeconds: cpuReadable ? (utime + stime) / this.clkTck : 0,
       workingSetBytes: rssMatch ? Number(rssMatch[1]) * 1024 : 0,
+      ...(cpuReadable ? {} : { cpuUnreadable: true }),
     }
     if (!Number.isFinite(startTicks) || startTicks < 0) return record
     const withToken: ProcessRecord = { ...record, instanceToken: String(startTicks) }
@@ -429,6 +439,20 @@ export function parsePsRecords(
   return records
 }
 
+/**
+ * 组装 ps 的字段参数。
+ * BSD 系(macOS 与各 BSD)用 `field=` 抑制表头;SVR4 系(SunOS, AIX)的 `ps -o` 只认逗号分隔的字段名,
+ * 带 `=` 的写法会以未知输出格式直接非零退出 —— 两条查询链因此都会失败, 面板永久读成数据源不可用。
+ * 表头行由 `parsePsRecords` 跳过(首个字段不是正整数)。
+ */
+function psArgs(full: boolean): string[] {
+  const svr4 = process.platform === 'sunos' || process.platform === 'aix'
+  if (full) {
+    return svr4 ? ['-eo', 'pid,ppid,time,rss,etime,comm'] : ['-axo', 'pid=,ppid=,time=,rss=,etime=,comm=']
+  }
+  return svr4 ? ['-eo', 'pid,rss,comm'] : ['-axo', 'pid=,rss=,comm=']
+}
+
 /** 类 Unix 查询:ps 全量进程(含父子关系、累计 CPU 时间与常驻内存;macOS 与各 BSD,Solaris,AIX 共用) */
 export class UnixPsQuery implements ProcessQuery {
   /** 首选来源,不视为降级 */
@@ -443,7 +467,7 @@ export class UnixPsQuery implements ProcessQuery {
   }
 
   async query(): Promise<ProcessRecord[]> {
-    const { text, pid } = await runPs(['-axo', 'pid=,ppid=,time=,rss=,etime=,comm='])
+    const { text, pid } = await runPs(psArgs(true))
     const stats = { unreadable: 0 }
     const records = parsePsRecords(text, ['pid', 'ppid', 'time', 'rss', 'etime'], stats)
     this.unreadableCount = stats.unreadable
@@ -457,7 +481,7 @@ export class UnixPsSimpleQuery implements ProcessQuery {
   readonly degraded = true
 
   async query(): Promise<ProcessRecord[]> {
-    const { text, pid } = await runPs(['-axo', 'pid=,rss=,comm='])
+    const { text, pid } = await runPs(psArgs(false))
     // 该命令链拿不到累计 CPU 时间:整批标为不可读,采集器因此不会为它们保留基准,
     // 回到首选链时也不会把降级期间的累计值当成一个窗口的增量(否则出现一次极大 CPU 峰值)
     return dropSampler(parsePsRecords(text, ['pid', 'rss']), pid).map((record) => ({ ...record, cpuUnreadable: true }))
@@ -644,7 +668,12 @@ export class ProcessCollector {
     if (this.polling) return
     this.polling = true
     try {
-      this.advance(await this.query.query())
+      /*
+       * 窗口起点取查询发起时刻:累计 CPU 时间是在查询过程中读到的,
+       * 若等查询结束才取刻度,窗口会短于真实增量窗口,查询越慢读数越偏大
+       */
+      const startedAt = process.hrtime.bigint()
+      this.advance(await this.query.query(), startedAt)
       this.lastError = null
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error)
@@ -658,22 +687,47 @@ export class ProcessCollector {
    * 平台只给可推算启动时刻时,把首次观测到的该值缓存下来当令牌用,避免逐轮抖动让基准失配。
    */
   private baselineKeyOf(record: ProcessRecord): string {
-    if (record.instanceToken !== undefined) return baselineKey(record)
-    if (record.startTimeMs === undefined) return String(record.pid)
     const cached = this.instanceTokens.get(record.pid)
-    // 缓存值只在该进程的推算启动时刻仍与之吻合时沿用:偏差超过容差即视为 pid 被复用并换新令牌
-    if (cached !== undefined && Math.abs(cached.baseMs - record.startTimeMs) <= INSTANCE_TOKEN_TOLERANCE_MS) {
-      return `${record.pid}@${cached.token}`
+    /*
+     * 启动时刻是唯一跨查询源可比的观测值:首选源(CIM 的 CreationDate)与降级源
+     * (Get-Process 的 StartTime)时点相同而序列化文本不同,各平台推算值也有毫秒级抖动,
+     * 故一律按启动时刻在容差内匹配已缓存的令牌,使同一进程在切换查询源时键保持不变
+     * (键一变,该轮 lastCpu 全部失配,全机 CPU 读数会被读成 0)
+     */
+    if (record.startTimeMs !== undefined) {
+      const startMs = record.startTimeMs
+      if (cached !== undefined && Math.abs(cached.baseMs - startMs) <= INSTANCE_TOKEN_TOLERANCE_MS) {
+        return `${record.pid}@${cached.token}`
+      }
+      // 令牌优先取平台原文(Linux 启动节拍, Windows 创建时刻),缺失时用启动时刻毫秒
+      const token = record.instanceToken ?? String(startMs)
+      this.instanceTokens.set(record.pid, { token, baseMs: startMs })
+      return `${record.pid}@${token}`
     }
-    const token = String(record.startTimeMs)
-    this.instanceTokens.set(record.pid, { token, baseMs: record.startTimeMs })
-    return `${record.pid}@${token}`
+    // 平台只给原生令牌(拿不到可推算的启动时刻):按原文比较
+    if (record.instanceToken !== undefined) return baselineKey(record)
+    /*
+     * 观测不到实例标识(降级链既无启动时刻也无原生令牌):沿用上一轮该 pid 的令牌,
+     * 否则键退化成纯 pid,与主源的键不同,切换那一轮的全机 CPU 读数被读成 0
+     */
+    return cached !== undefined ? `${record.pid}@${cached.token}` : String(record.pid)
   }
 
-  /** 以原始记录推进一轮采样(纯逻辑,便于测试) */
-  advance(records: ProcessRecord[]): MonitorSnapshot {
+  /**
+   * 以原始记录推进一轮采样(纯逻辑,便于测试)。
+   * @param startedAt 本轮查询的发起时刻(单调时钟),缺省取调用时刻
+   */
+  advance(records: ProcessRecord[], startedAt?: bigint): MonitorSnapshot {
     const byPid = new Map<number, ProcessRecord>()
     for (const record of records) byPid.set(record.pid, record)
+
+    /*
+     * 先按本轮观测刷新实例令牌缓存:句柄存续校验与差分基准都取本轮值。
+     * 若把刷新留在差分循环里,存续校验读到的是上一轮该 pid 的令牌,
+     * pid 被系统复用后要晚一轮才作废句柄(这一轮该 pid 顶着旧名称与旧会话留在面板上)
+     */
+    const keyByPid = new Map<number, string>()
+    for (const record of records) keyByPid.set(record.pid, this.baselineKeyOf(record))
 
     // 进程树:自 dsh 根进程按父子关系深度优先
     const children = new Map<number, number[]>()
@@ -734,13 +788,20 @@ export class ProcessCollector {
 
     // CPU 差分:全量进程都算(中段样本用 dsh 集合,左端「其他应用」用其余进程合计)
     const now = Date.now()
-    const mark = process.hrtime.bigint()
+    // 窗口刻度取查询发起时刻(见 poll),墙钟只用于展示采样时刻
+    const mark = startedAt ?? process.hrtime.bigint()
     // 窗口长度取单调时钟,与墙钟跳变解耦(墙钟只用于展示采样时刻)
     const elapsed = this.lastSampleMark === null ? 0 : Number(mark - this.lastSampleMark) / 1e9
+    /*
+     * 窗口刻度先提交再推进基准:本轮若在其后抛错(归属解析之外的解析与快照组装路径),
+     * 下一轮窗口长度仍然正常;把提交留在末尾会让异常轮的窗口翻倍,
+     * 全机 CPU 读数被整体摊薄一半,还会被 poll 记成「查询失败」而无从察觉
+     */
+    this.lastSampleMark = mark
     const cpuPercentByPid = new Map<number, number>()
     const aliveKeys = new Set<string>()
     for (const record of records) {
-      const key = this.baselineKeyOf(record)
+      const key = keyByPid.get(record.pid) ?? String(record.pid)
       aliveKeys.add(key)
       const previous = this.lastCpu.get(key)
       if (record.cpuUnreadable === true) {
@@ -842,7 +903,6 @@ export class ProcessCollector {
     const othersMemoryPercent = memoryPercentOf(othersMemoryBytes)
     const idleMemoryPercent = memoryPercentOf(idleMemoryBytes)
     this.lastSampledAt = now
-    this.lastSampleMark = mark
 
     // 读到但无权读取的进程既不计入 dsh 集合,也不会计入「其他应用」,会使「空闲」偏高,
     // 故与查询链降级一并标注,由面板显示为采集降级

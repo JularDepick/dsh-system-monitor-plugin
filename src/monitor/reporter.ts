@@ -47,13 +47,19 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
         description: '进程句柄列表',
         items: {
           type: 'object',
+          /*
+           * 字段一律声明为无约束 JSON:框架会先用本 schema 校验入参,
+           * 声明成 number/string 时一个句柄的类型偏差就让整批 INVALID_ARGS,
+           * 逐条校验的 rejected 回执与同批合法句柄一起丢失;
+           * 类型与取值判定由 validateHandle 承担,多余字段忽略(additionalProperties 放开)
+           */
           properties: {
-            pid: { type: 'number', required: true, description: '进程标识' },
-            name: { type: 'string', description: '进程可读名称' },
-            parentPid: { type: 'number', description: '父进程标识' },
-            sessionId: { type: 'string', description: '所属会话标识(缺省取发起本次调用的会话)' },
+            pid: { type: 'json', required: true, description: '进程标识(正整数)' },
+            name: { type: 'json', description: '进程可读名称(字符串)' },
+            parentPid: { type: 'json', description: '父进程标识(正整数,可选)' },
+            sessionId: { type: 'json', description: '所属会话标识(非空字符串,缺省取发起本次调用的会话)' },
           },
-          additionalProperties: false,
+          additionalProperties: true,
         },
       },
     },
@@ -63,18 +69,6 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
     },
     async execute(args, exec) {
       const incoming = Array.isArray(args.handles) ? (args.handles as unknown[]) : []
-      // 先按 pid 去重再截断:重复句柄不该占用单次名额
-      const unique: unknown[] = []
-      const uniquePids = new Set<number>()
-      for (const item of incoming) {
-        const pid = (item as { pid?: unknown } | null)?.pid
-        if (typeof pid === 'number' && uniquePids.has(pid)) continue
-        if (typeof pid === 'number') uniquePids.add(pid)
-        unique.push(item)
-      }
-      // 条数上限:超出部分不进入采集集合,按拒绝计数(带上本次被丢掉的条数)返给调用方
-      const list = unique.slice(0, MAX_REPORTED_HANDLES)
-      const overflow = unique.length - list.length
       const fallbackSession = callerSessionId(exec)
       /*
        * 溢出条数不折成一条伪拒绝项(那会让「拒绝 1 项」与真实丢弃条数不符),
@@ -83,16 +77,26 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
       const rejected: ReportReceipt['rejected'] = []
       const accepted: ProcessHandle[] = []
       const seen = new Set<number>()
-      for (const raw of list) {
+      const rejectedPids = new Set<number>()
+      for (const raw of incoming) {
         const reason = validateHandle(raw)
         if (reason) {
           const pid = (raw as Record<string, unknown> | null)?.pid
           // 无法解析的 pid 记 0(JSON 无法表示 NaN,序列化后会变成 null)
-          rejected.push({ pid: typeof pid === 'number' && Number.isFinite(pid) ? pid : 0, reason })
+          const numericPid = typeof pid === 'number' && Number.isFinite(pid) ? pid : 0
+          // 同一 pid 的重复非法项只记一条,避免拒绝计数被重复项放大
+          if (numericPid > 0) {
+            if (rejectedPids.has(numericPid)) continue
+            rejectedPids.add(numericPid)
+          }
+          rejected.push({ pid: numericPid, reason })
           continue
         }
         const handle = raw as ProcessHandle
-        // 重复句柄按合并处理,不重复统计
+        /*
+         * 去重放在逐条校验之后:先按 pid 去重时,同 pid 若先出现一条非法项,
+         * 后面那条合法项会被当成重复项直接丢弃(既不纳入监控,也不产生自己的拒绝原因)
+         */
         if (seen.has(handle.pid)) continue
         seen.add(handle.pid)
         // 未显式标注会话时按调用方会话归属(模型只报 pid 也能落进正确的会话维度)
@@ -100,7 +104,10 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
           ? { ...handle, sessionId: fallbackSession }
           : handle)
       }
-      collector.mergeReported(accepted)
+      // 条数上限按接受项截断:重复与非法项都不占名额
+      const list = accepted.slice(0, MAX_REPORTED_HANDLES)
+      const overflow = accepted.length - list.length
+      collector.mergeReported(list)
       const detail = rejected.length > 0 ? `;拒绝 ${rejected.length} 项` : ''
       const overflowDetail = overflow > 0 ? `;另有 ${overflow} 条超出单次上限 ${MAX_REPORTED_HANDLES} 条未纳入` : ''
       const receipt: ReportReceipt = {

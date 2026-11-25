@@ -11,7 +11,7 @@
 import { basename } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config } from '../config'
-import { DEFAULT_POLL_INTERVAL, MAX_POLL_INTERVAL, MIN_POLL_INTERVAL } from '../constants'
+import { DEFAULT_POLL_INTERVAL, MAX_POLL_INTERVAL, MIN_POLL_INTERVAL, SPAWN_HOOK_STALE_BEATS } from '../constants'
 import { OwnerResolver, readProcessEnviron } from './attribution'
 import type { SessionInfo } from './attribution'
 import { ProcessCollector, createPlatformQuery } from './collector'
@@ -57,6 +57,8 @@ interface SpawnHook {
   wrapped: SubprocessFace['spawn']
   /** 各插件作用域各自的派生观察器(按注册顺序打开派生窗口) */
   watchers: Map<symbol, ChildSpawnWatcher>
+  /** 最近一次被某个作用域取用的心跳,用于清理宿主已替换掉的旧实例条目 */
+  lastBeat: number
 }
 
 /**
@@ -70,6 +72,9 @@ const hookedSpawns = new Map<SubprocessFace, SpawnHook>()
 
 /** Cordis 服务经代理暴露给上下文,该全局符号指向服务实例本体(包装落在本体上才稳定可查) */
 const CORDIS_ORIGINAL = Symbol.for('cordis.original')
+
+/** 派生包装的存活心跳:每个轮询轮次递增一次,用于识别已不再被任何作用域取用的实例包装 */
+let hookBeat = 0
 
 /** 取宿主服务实例本体(取不到原始实例时退回代理本身) */
 function serviceInstance(view: SubprocessFace): SubprocessFace {
@@ -86,7 +91,16 @@ function readSessionInfos(ctx: Context): SessionInfo[] {
   if (!sessions) return []
   const titles = ctx.get('sessionTitle') as unknown as SessionTitleFace | undefined
   return sessions.list().map((session) => {
-    const title = titles?.get(session)?.title
+    /*
+     * 单个会话的标题读取失败(例如会话在 list 与 get 之间被销毁)只丢该会话的显示名,
+     * 不得让整轮归属一起落空
+     */
+    let title: string | undefined
+    try {
+      title = titles?.get(session)?.title
+    } catch {
+      title = undefined
+    }
     const cwd = session.header.cwd
     const label = title !== undefined && title.length > 0
       ? title
@@ -110,7 +124,14 @@ function readTerminalOwners(ctx: Context): Map<number, string> {
   const terminals = ctx.get('terminals') as unknown as TerminalsFace | undefined
   if (!agents || !terminals) return owners
   for (const agent of agents.list()) {
-    for (const snapshot of terminals.list(agent)) {
+    // 单个 agent 的终端列举失败(PTY 正在拆除)只丢该 agent 的映射,不影响其它会话
+    let snapshots: Array<{ pid?: number }>
+    try {
+      snapshots = terminals.list(agent)
+    } catch {
+      continue
+    }
+    for (const snapshot of snapshots) {
       if (typeof snapshot.pid === 'number' && snapshot.pid > 0) owners.set(snapshot.pid, agent.id)
     }
   }
@@ -132,6 +153,8 @@ function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher, scope: symbol)
   // 该实例已有包装:本作用域登记自己的观察器即可,不重复包装
   if (existing !== undefined) {
     existing.watchers.set(scope, watcher)
+    // 心跳用于清理宿主替换实例后残留的旧条目(见 sweepStaleHooks)
+    existing.lastBeat = hookBeat
     // 宿主就地替换了派生方法(热更新):原包装已不在实例上,按当前方法重新包装,派生归属不会静默失效
     if (service.spawn === existing.wrapped) return
   }
@@ -142,7 +165,7 @@ function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher, scope: symbol)
   const instanceSpawn = (service as unknown as { spawn?: unknown }).spawn
   const original = (typeof instanceSpawn === 'function' ? instanceSpawn : view.spawn) as SubprocessFace['spawn']
   // 重新包装时沿用原记录(保留已登记的作用域),基准则换成实例当前的方法
-  const hook: SpawnHook = existing ?? { original, wrapped: original, watchers: new Map() }
+  const hook: SpawnHook = existing ?? { original, wrapped: original, watchers: new Map(), lastBeat: hookBeat }
   hook.original = original
   const wrapped = function (this: unknown, spec: unknown, ...rest: unknown[]): unknown {
     /*
@@ -162,6 +185,7 @@ function hookSubprocess(ctx: Context, watcher: ChildSpawnWatcher, scope: symbol)
   }
   hook.wrapped = wrapped
   hook.watchers.set(scope, watcher)
+  hook.lastBeat = hookBeat
   hookedSpawns.set(service, hook)
 }
 
@@ -171,6 +195,25 @@ function unhookSubprocess(scope: symbol): void {
     hook.watchers.delete(scope)
     if (hook.watchers.size > 0) continue
     if (service.spawn === hook.wrapped) service.spawn = hook.original
+    hookedSpawns.delete(service)
+  }
+}
+
+/**
+ * 清理长期未被任何作用域取用的包装记录。
+ * 宿主重新 provide 一个新的 subprocess 实例而本插件保持加载时,旧实例条目只进不出,
+ * 会连同其观察器一起被模块级 Map 强引用;心跳超过阈值即还原包装并丢弃记录。
+ */
+function sweepStaleHooks(): void {
+  for (const [service, hook] of [...hookedSpawns]) {
+    if (hookBeat - hook.lastBeat <= SPAWN_HOOK_STALE_BEATS) continue
+    if (service.spawn === hook.wrapped) {
+      try {
+        service.spawn = hook.original
+      } catch {
+        // 实例不可写:只丢记录
+      }
+    }
     hookedSpawns.delete(service)
   }
 }
@@ -223,6 +266,17 @@ export function setup(ctx: Context, config: Config): void {
   // 轮询采集:激活即执行首轮,卸载时自动清理;每轮先刷新宿主侧归属信息
   ctx.effect(() => {
     const tick = (): void => {
+      hookBeat += 1
+      /*
+       * 派生包装每轮复验:宿主就地替换派生方法时不产生 internal/service 事件,
+       * 只靠事件挂钩会让包装被覆盖后永久消失(面板路由同样按轮补挂,两者保持一致)
+       */
+      try {
+        hookSubprocess(ctx, watcher, scope)
+        sweepStaleHooks()
+      } catch {
+        // 复验失败不影响本轮采集
+      }
       /*
        * 先取走锚点再刷新宿主状态:锚点表只进不出,若取用被前面抛出的异常跳过,
        * 表内会一直累积;取走后再交给解析器,失败也只影响该轮归属

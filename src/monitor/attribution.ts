@@ -186,8 +186,12 @@ export class OwnerResolver {
 
   /** 记录 Agent 汇报句柄的会话归属(显式标注优先于环境推断) */
   setReported(pid: number, sessionId: string | undefined): void {
-    if (sessionId === undefined || sessionId.length === 0) this.reported.delete(pid)
-    else this.reported.set(pid, sessionId)
+    /*
+     * 取不到调用方会话时不改动既有归属:同一句柄被再次汇报(本次调用没有会话上下文)
+     * 不该把先前显式标注的会话抹成未归因;归属只在 pid 复用或进程退出时作废
+     */
+    if (sessionId === undefined || sessionId.length === 0) return
+    this.reported.set(pid, sessionId)
   }
 
   /**

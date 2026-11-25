@@ -15,12 +15,16 @@ import { PERCENT_DISPLAY_FLOOR } from '../constants'
 const PERCENT_FALLBACK = '--'
 
 /**
- * 百分比字符串:确切 0 给 `0%`,低于展示下限给 `<0.01%`,其余按两位小数。
+ * 百分比字符串:确切 0(含负偏差)给 `0%`,低于展示下限给 `<0.01%`,其余按两位小数。
  * 非有限值(非数,无穷)给占位文本,不产生 `NaN%` 这类读数。
  */
 export function formatPercent(value: number): string {
   if (!Number.isFinite(value)) return PERCENT_FALLBACK
-  if (value === 0) return '0%'
+  /*
+   * 负值不在占用率的定义域内(派生值做差可能溢出到负数):
+   * 按 0 读,不把负偏差显示成 `<0.01%` 那种「极小正占用」
+   */
+  if (value <= 0) return '0%'
   if (value < PERCENT_DISPLAY_FLOOR) return `<${PERCENT_DISPLAY_FLOOR.toFixed(2)}%`
   return `${value.toFixed(2)}%`
 }
