@@ -8,7 +8,7 @@
  *   2. require 的包名是宿主平台模块表的子集,且该表与 tsdown 的 PLATFORM_EXTERNALS 同值;
  *   3. 在无 module/exports 的沙箱里执行后,页面全局不新增 module/exports,导出含 name/inject/apply。
  * 断言按「报错即失败」处理:模块作用域抛错、缺产物字段都算失败(只提示会让崩溃产物过门禁)。
- * dist/client.js 不存在时(未构建)跳过并提示,不视为失败。
+ * dist/client.js 不存在时(未构建)按失败处理:它是发布面的一部分,跳过会让门禁在干净 clone 上空跑通过。
  */
 
 import { existsSync, readFileSync } from 'node:fs'

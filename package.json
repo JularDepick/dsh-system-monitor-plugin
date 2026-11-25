@@ -54,7 +54,7 @@
     "typecheck": "tsc --noEmit",
     "check": "node scripts/syntax-check.mjs && node scripts/check-client-bundle.mjs",
     "prepare": "pnpm build",
-    "prepublishOnly": "pnpm check && pnpm typecheck",
+    "prepublishOnly": "pnpm build && pnpm check && pnpm typecheck",
     "postpack": "node scripts/clean-release.cjs && node scripts/pack-to-release.cjs"
   },
   "dependencies": {

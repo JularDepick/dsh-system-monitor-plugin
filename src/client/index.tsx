@@ -479,7 +479,7 @@ const panelCss = `
   --sm-card: #ffffff; --sm-card-head: #e4eefc; --sm-track: #cfdff5;
   --sm-border: #cdddf2; --sm-border-strong: #a9c3e6;
   --sm-text-primary: #12233d; --sm-text-secondary: #45597a; --sm-text-tertiary: #5b6b86;
-  --sm-accent: #2470d8; --sm-active: #2470d824;
+  --sm-active: #2470d824;
   --sm-ok: #0f7a36; --sm-warn: #9c5c08; --sm-warn-surface: #fff5e3; --sm-error: #d92d20;
   --sm-idle: #dce8f9; --sm-empty: #12233d2e;
 }
@@ -487,7 +487,7 @@ body[data-ds-dark-theme] .sm-root {
   --sm-card: #16223a; --sm-card-head: #2a3a58; --sm-track: #3d5178;
   --sm-border: #33456a; --sm-border-strong: #5a7099;
   --sm-text-primary: #e9effb; --sm-text-secondary: #b5c3dc; --sm-text-tertiary: #8595b1;
-  --sm-accent: #5b9bff; --sm-active: #5b9bff33;
+  --sm-active: #5b9bff33;
   --sm-ok: #3ecf72; --sm-warn: #e0a63c; --sm-warn-surface: #2a2314; --sm-error: #ff6b6b;
   --sm-idle: #2a3a58; --sm-empty: #e9effb2e;
 }
@@ -1097,8 +1097,8 @@ function DimensionCard(props: {
        * 内容比卡片宽时读回的就是溢出后的宽度,反馈给列宽分配后压缩分支永不命中,
        * 右侧列(先被裁的是操作列与内存占比)会被卡片 overflow:hidden 裁掉且不再自愈
        */
-      const available = element.clientWidth - PANEL_CARD_BODY_PADDING_X * 2
-      if (available > 0) setTableWidth(available)
+      // 表格是卡片正文的兄弟节点, 不承担正文的左右内边距: 可用宽度就是卡片内容宽本身
+      if (element.clientWidth > 0) setTableWidth(element.clientWidth)
     })
     observer.observe(element)
     return () => observer.disconnect()
