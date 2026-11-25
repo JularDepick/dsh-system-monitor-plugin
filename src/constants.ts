@@ -141,6 +141,13 @@ export const CLK_TCK_PROBE_MISMATCH_RATIO_MAX = 2
 export const CLK_TCK_PROBE_MIN_UPTIME_SECONDS = 60
 
 /**
+ * 时钟节拍标准接口(getconf)的调用超时(毫秒)。
+ * 该命令本身是毫秒级返回,而探测发生在插件装配期的同步调用里,
+ * 复用系统进程查询的 10 秒超时会在异常挂起时把宿主加载卡住,故单独取短超时。
+ */
+export const CLK_TCK_PROBE_TIMEOUT_MS = 2000
+
+/**
  * 时钟节拍缓存格式版本:
  * 缓存一经写入会被长期复用,故推算口径或缓存结构变化时必须递增该值,
  * 让旧缓存自动失效并重新探测(避免把历史错误值一直沿用下去);
@@ -322,9 +329,6 @@ export const PANEL_TEXT_SECONDARY_COLOR = 'var(--sm-text-secondary)'
 /** 文字:三级档(辅助说明、未采样行、装饰性提示、页脚) */
 export const PANEL_TEXT_TERTIARY_COLOR = 'var(--sm-text-tertiary)'
 
-/** 强调色(面板强调元素与图例中的 dsh 侧示意) */
-export const PANEL_ACCENT_COLOR = 'var(--sm-accent)'
-
 /** 交互态叠加底色:按下 */
 export const PANEL_ACTIVE_COLOR = 'var(--sm-active)'
 
@@ -341,7 +345,9 @@ export const PANEL_STATE_WARN_SURFACE_COLOR = 'var(--sm-warn-surface)'
 export const PANEL_STATE_ERROR_COLOR = 'var(--sm-error)'
 
 /*
- * 语义泳道色:参与泳道名文字色的对比度判定,故必须是具体十六进制值(不接受 CSS 变量)。
+ * 语义泳道色:主进程,子代理合计与其他应用三色参与泳道名文字色的对比度判定,
+ * 故必须是具体十六进制值(不接受 CSS 变量);
+ * 空闲与无成员占位两色不承载名称文字,按明暗两套主题取 CSS 变量。
  */
 
 /** 语义泳道色:主进程与宿主(强调蓝,与预备色池刻意区分) */
@@ -392,7 +398,7 @@ export const PANEL_SHARE_BAR_BORDER_WIDTH = 2
 /** 占比条整体外边框颜色(取强化描边色,使三段泳道有统一外框) */
 export const PANEL_SHARE_BAR_BORDER_COLOR = PANEL_BORDER_STRONG_COLOR
 
-/** 资源占比堆叠条高度(像素;含 1px 外边框) */
+/** 资源占比堆叠条高度(像素;外边框 2px 由 `PANEL_SHARE_BAR_BORDER_WIDTH` 配 `boxSizing:border-box` 内缩,不改变条高) */
 export const PANEL_SHARE_BAR_HEIGHT = 18
 
 /**

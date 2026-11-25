@@ -1,5 +1,8 @@
 # 依赖与缓存
 node_modules/
+*.tsbuildinfo
+pnpm-debug.log*
+.DS_Store
 .pnpm-store/
 .agents/
 temp/

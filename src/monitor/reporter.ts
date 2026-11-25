@@ -111,9 +111,10 @@ export function registerReporter(ctx: Context, collector: ProcessCollector): voi
       const detail = rejected.length > 0 ? `;拒绝 ${rejected.length} 项` : ''
       const overflowDetail = overflow > 0 ? `;另有 ${overflow} 条超出单次上限 ${MAX_REPORTED_HANDLES} 条未纳入` : ''
       const receipt: ReportReceipt = {
-        accepted: accepted.length,
+        // 只计实际纳入采集集合的条数:超出单次上限被截断的项不算已纳入(否则数值与真实丢弃条数不符)
+        accepted: list.length,
         rejected,
-        message: `已纳入监控 ${accepted.length} 个进程${detail}${overflowDetail}`,
+        message: `已纳入监控 ${list.length} 个进程${detail}${overflowDetail}`,
       }
       return JSON.stringify(receipt)
     },

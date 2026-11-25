@@ -197,6 +197,10 @@ function parseIni(name) {
     const header = /^\[(.+)\]$/.exec(line)
     if (header !== null) {
       section = header[1]
+      // 只允许 meta 与 translation 两节:多余节的词条会被静默并入词条表,从此不再参与键集比对
+      if (section !== 'meta' && section !== 'translation') {
+        failures.push(name + '  出现未定义的节: [' + section + ']')
+      }
       continue
     }
     const index = line.indexOf('=')
@@ -224,7 +228,9 @@ for (const name of iniNames) {
   const lang = isExample ? name.slice('.example_'.length, -'.ini'.length) : name.slice(0, -'.ini'.length)
   iniByLang.set(lang, ini)
   for (const key of ['for', 'lang', 'name', 'endtime']) {
-    if (!ini.meta.has(key)) failures.push(name + '  [meta] 缺少键 ' + key)
+    const value = ini.meta.get(key)
+    if (value === undefined) failures.push(name + '  [meta] 缺少键 ' + key)
+    else if (value.length === 0) failures.push(name + '  [meta] ' + key + ' 取值为空')
   }
   if (ini.meta.get('lang') !== lang) failures.push(name + '  [meta] lang 与文件名不符(期望 ' + lang + ')')
   if (expectedFor !== null && ini.meta.get('for') !== expectedFor) {
@@ -296,6 +302,17 @@ function compareTranslations(label, expected, actual, options = {}) {
         if (CJK.test(value)) failures.push('i18n.ts(en-US)  ' + key + ' 含中日韩或全角字符')
       }
       compareTranslations('i18n.ts(zh-CN) vs en-US', dicts['zh-CN'], dicts['en-US'])
+      // 两套字典必须以 zh 与 en 注册进宿主 locale 服务:漏注册时宿主回退链最终落到 key 本身(原始 key 上屏)
+      const registry = /export const panelDictionaries[^=]*=\s*\{([\s\S]*?)\n\}/.exec(source)
+      if (registry === null) {
+        failures.push('i18n.ts  未找到 panelDictionaries 注册表')
+      } else {
+        for (const code of ['zh', 'en']) {
+          if (!new RegExp('\\b' + code + ':').test(registry[1])) {
+            failures.push('i18n.ts  panelDictionaries 未注册语言 ' + code)
+          }
+        }
+      }
       for (const [lang, dict] of Object.entries(dicts)) {
         const ini = iniByLang.get(lang)
         if (ini === undefined) {

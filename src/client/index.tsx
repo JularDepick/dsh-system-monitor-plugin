@@ -784,7 +784,20 @@ function writeStoredPreferences(patch: Partial<StoredPreferences>): void {
   try {
     if (typeof localStorage === 'undefined') return
     const raw = localStorage.getItem(PANEL_STORAGE_KEY)
-    const current = raw === null ? {} : (JSON.parse(raw) as Record<string, unknown>)
+    let current: Record<string, unknown> = {}
+    if (raw !== null) {
+      try {
+        const parsed: unknown = JSON.parse(raw)
+        current = typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {}
+      } catch {
+        /*
+         * 键内容已损坏(外部工具写坏或写入中途被打断):按空偏好重写。
+         * 若在这里直接抛出,此后每次写入都会落到外层 catch,面板设置
+         * (折叠,列开关,留存轮数,色池与取间色新增)变成永久静默失效
+         */
+        current = {}
+      }
+    }
     localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify({ ...current, ...patch }))
   } catch {
     // 无存储权限时忽略
@@ -1067,7 +1080,6 @@ function DimensionCard(props: {
   onToggle: () => void
 }): ReactNode {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const tableRef = useRef<HTMLTableElement | null>(null)
   const [width, setWidth] = useState(PANEL_SHARE_BAR_FALLBACK_WIDTH)
   const [tableWidth, setTableWidth] = useState(0)
 
@@ -1079,12 +1091,16 @@ function DimensionCard(props: {
       // clientWidth 含卡片正文左右内边距,须扣掉左右各一份,否则段标签的「放得下」估算偏乐观
       const next = element.clientWidth - PANEL_CARD_BODY_PADDING_X * 2 - PANEL_CHART_LABEL_WIDTH - 10
       if (next > 0) setWidth(next)
-      const table = tableRef.current
-      if (table !== null) setTableWidth(table.clientWidth)
+      /*
+       * 表格可用宽度取卡片内容宽,不能取表格自身的 clientWidth:
+       * table-layout:fixed 下表格的 used width 是 max(100%, 各列宽之和),
+       * 内容比卡片宽时读回的就是溢出后的宽度,反馈给列宽分配后压缩分支永不命中,
+       * 右侧列(先被裁的是操作列与内存占比)会被卡片 overflow:hidden 裁掉且不再自愈
+       */
+      const available = element.clientWidth - PANEL_CARD_BODY_PADDING_X * 2
+      if (available > 0) setTableWidth(available)
     })
     observer.observe(element)
-    const table = tableRef.current
-    if (table !== null) observer.observe(table)
     return () => observer.disconnect()
     /*
      * 展开时才测量:折叠期间泳道与表格不在 DOM 中,重新展开需重新挂观察器;
@@ -1186,7 +1202,6 @@ function DimensionCard(props: {
         </div>
       ) : (
         <table
-          ref={tableRef}
           style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', borderSpacing: 0 }}
           aria-label={props.ariaLabel}
         >
@@ -1255,7 +1270,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
       {t('config.open')}
     </Button>
   )
-  /** 配置入口的焦点锚点:官方 Button 不便透传 ref,故按容器取内部按钮回焦 */
+  /** 配置入口的焦点锚点:官方 Button 支持 ref 透传,这里按容器取内部按钮回焦以免额外引入转发组件 */
   const settingsAnchorRef = useRef<HTMLSpanElement | null>(null)
   const settingsRegionRef = useRef<HTMLDivElement | null>(null)
   const configWasOpen = useRef(false)
@@ -2095,7 +2110,7 @@ const MonitorTab = (props: MonitorTabProps): ReactNode => {
   const actionColumn = (): PanelColumn => ({
     head: (
       <th scope="col" style={headCellStyle}>
-        <span className="sm-sr-only">{t('column.action')}</span>
+        <span className="sm-sr-only">{t('table.column.action')}</span>
       </th>
     ),
     contentWidth: 0,

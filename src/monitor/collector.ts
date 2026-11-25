@@ -696,7 +696,13 @@ export class ProcessCollector {
      */
     if (record.startTimeMs !== undefined) {
       const startMs = record.startTimeMs
-      if (cached !== undefined && Math.abs(cached.baseMs - startMs) <= INSTANCE_TOKEN_TOLERANCE_MS) {
+      /*
+       * 容差匹配只用于吸收跨源序列化差异与推算抖动;
+       * 若本轮拿到原生令牌且与缓存令牌不同,那是明确的新实例(pid 已被复用),
+       * 此时沿用旧令牌会让锚点与归属缓存一起漏作废
+       */
+      const tokenChanged = record.instanceToken !== undefined && cached !== undefined && cached.token !== record.instanceToken
+      if (cached !== undefined && !tokenChanged && Math.abs(cached.baseMs - startMs) <= INSTANCE_TOKEN_TOLERANCE_MS) {
         return `${record.pid}@${cached.token}`
       }
       // 令牌优先取平台原文(Linux 启动节拍, Windows 创建时刻),缺失时用启动时刻毫秒
@@ -831,8 +837,16 @@ export class ProcessCollector {
     // 平台没有原生令牌时(ps 链平台)退回采集器缓存的推算令牌,否则这些平台上的锚点校验一直空转
     const instances = new Map<number, string>()
     for (const record of records) {
-      const token = record.instanceToken ?? this.instanceTokens.get(record.pid)?.token
-      if (token !== undefined) instances.set(record.pid, token)
+      /*
+       * 交给归属解析器的必须是跨查询源稳定的令牌:原生原文在首选源与降级源之间格式不同,
+       * 直接透传会让切换源那一轮把所有锚点判成 pid 复用,归属整轮丢失。
+       * 故取基准键里的令牌(已按启动时刻归一)
+       */
+      const key = keyByPid.get(record.pid)
+      if (key === undefined) continue
+      const at = key.indexOf('@')
+      if (at < 0) continue
+      instances.set(record.pid, key.slice(at + 1))
     }
     /*
      * 宽限期内的汇报句柄本轮不在采样集合里,但不应因此丢掉会话归属:

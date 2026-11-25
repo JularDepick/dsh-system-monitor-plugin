@@ -29,7 +29,8 @@ function stripNoise(text) {
 }
 
 if (!existsSync(file)) {
-  console.log('客户端产物校验: 未找到 ' + file + '(先构建再校验),本次跳过')
+  // 产物本身就是发布面的一部分:缺失时静默跳过会让 CI 在干净 clone 上"全绿"却什么都没校验
+  failures.push('未找到 ' + file + '(先执行 pnpm build 再校验)')
 } else {
   const text = readFileSync(file, 'utf8')
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'))

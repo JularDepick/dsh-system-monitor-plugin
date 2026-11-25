@@ -19,11 +19,11 @@ import {
   CLK_TCK_PROBE_MIN_UPTIME_SECONDS,
   CLK_TCK_PROBE_MISMATCH_RATIO_MAX,
   CLK_TCK_PROBE_MISMATCH_RATIO_MIN,
+  CLK_TCK_PROBE_TIMEOUT_MS,
   CLK_TCK_PROBE_TOLERANCE,
   ENV_CACHE_DIR,
   ENV_CACHE_FILE,
   LINUX_CLK_TCK,
-  QUERY_TIMEOUT_MS,
 } from '../constants'
 
 /** 单次探测的诊断记录(仅供人工排查,不参与取值) */
@@ -114,7 +114,7 @@ function writeCache(cache: ClkTckCache): void {
 /** 探测法一:getconf CLK_TCK(POSIX 标准接口,精确;缺失或失败返回 null) */
 function probeGetconf(): number | null {
   try {
-    const output = execFileSync('getconf', ['CLK_TCK'], { timeout: QUERY_TIMEOUT_MS, encoding: 'utf8' })
+    const output = execFileSync('getconf', ['CLK_TCK'], { timeout: CLK_TCK_PROBE_TIMEOUT_MS, encoding: 'utf8' })
     const value = Number.parseInt(output.trim(), 10)
     return Number.isInteger(value) ? value : null
   } catch {
